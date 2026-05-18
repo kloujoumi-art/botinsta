@@ -13,12 +13,17 @@ class FbLoginManager:
     async def login(self) -> bool:
         c_user = os.getenv("FACEBOOK_C_USER", "").strip()
         xs     = os.getenv("FACEBOOK_XS", "").strip()
-        if c_user and xs:
-            return await self._cookie_login(c_user, xs)
         email    = os.getenv("FACEBOOK_EMAIL", "").strip()
         password = os.getenv("FACEBOOK_PASSWORD", "").strip()
+
+        if c_user and xs:
+            if await self._cookie_login(c_user, xs):
+                return True
+            logger.warning("Cookies invalides — tentative via formulaire...")
+
         if email and password:
             return await self._form_login(email, password)
+
         logger.error("Aucune méthode de connexion Facebook configurée")
         return False
 
@@ -34,7 +39,12 @@ class FbLoginManager:
             if await self._is_logged_in():
                 logger.info("Connexion Facebook via cookies réussie ✓")
                 return True
-            logger.warning("Cookies Facebook invalides")
+            url = self.browser.page.url
+            logger.warning(f"Cookies Facebook invalides — URL: {url}")
+            try:
+                await self.browser.page.screenshot(path="./data/debug_fb_login.png")
+            except Exception:
+                pass
             return False
         except Exception as e:
             logger.error(f"Erreur cookie login Facebook : {e}")
@@ -65,16 +75,20 @@ class FbLoginManager:
         try:
             url = self.browser.page.url
             content = await self.browser.page.content()
-            return (
-                "facebook.com" in url
-                and "login" not in url
-                and "checkpoint" not in url
-                and (
-                    'role="feed"' in content
-                    or '"__typename":"User"' in content
-                    or "joyride" in content
-                    or 'aria-label="Facebook"' in content
-                )
+            bad_urls = ("login", "checkpoint", "recover", "two_step", "two-step", "security")
+            if not "facebook.com" in url:
+                return False
+            if any(b in url for b in bad_urls):
+                return False
+            logged_in_signals = (
+                'role="feed"',
+                '"__typename":"User"',
+                "joyride",
+                'aria-label="Facebook"',
+                '"USER_ID"',
+                "profile_photo_uri",
+                '"viewer":{',
             )
+            return any(s in content for s in logged_in_signals)
         except Exception:
             return False
