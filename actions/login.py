@@ -68,15 +68,21 @@ class LoginManager:
     async def _do_login(self, page: Page) -> bool:
         logger.info("Connexion à Instagram...")
         try:
-            await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
+            # Passage par la page d'accueil pour établir l'état JS/cookies initial
+            try:
+                await page.goto(INSTAGRAM_URL, wait_until="domcontentloaded", timeout=30000)
+                await random_sleep(2, 4)
+            except Exception:
+                pass
 
-            # Attendre l'événement load (JS bundles téléchargés + exécution démarrée)
+            # Navigation vers le login
+            await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
             try:
                 await page.wait_for_load_state("load", timeout=25000)
             except Exception:
                 pass
 
-            await random_sleep(6, 10)  # laisser React hydrater le DOM
+            await random_sleep(7, 11)  # laisser React hydrater le DOM
 
             current_url = page.url
             page_title = await page.title()
@@ -84,15 +90,22 @@ class LoginManager:
 
             await self._handle_cookie_banner(page)
 
+            # Audit JS : compter les inputs réellement dans le DOM
+            try:
+                n_inputs = await page.evaluate("document.querySelectorAll('input').length")
+                logger.info(f"Inputs trouvés dans le DOM (JS) : {n_inputs}")
+            except Exception:
+                pass
+
             # Attendre que le formulaire de connexion soit présent dans le DOM
             try:
                 await page.wait_for_selector('form', timeout=20000)
-                logger.info("Formulaire détecté dans le DOM")
-                await random_sleep(1, 2)
+                logger.info("Formulaire <form> détecté dans le DOM")
+                await random_sleep(2, 3)
             except Exception:
-                logger.warning("Formulaire non trouvé, tentative avec les inputs quand même")
+                logger.warning("Aucun <form> trouvé après 20s")
 
-            # Screenshot après que le formulaire devrait être là
+            # Screenshot pour voir ce que le bot voit réellement
             await _take_debug_screenshot(page, "login_page")
 
             # Chercher le champ username avec plusieurs sélecteurs de secours
@@ -102,12 +115,11 @@ class LoginManager:
                 'input[aria-label="Phone number, username, or email"]',
                 'input[aria-label="Numéro de téléphone, nom d\'utilisateur ou adresse e-mail"]',
                 'input[autocomplete="username"]',
-                'input[type="text"]',
             ]
 
             for sel in username_selectors:
                 try:
-                    el = await page.wait_for_selector(sel, timeout=20000)
+                    el = await page.wait_for_selector(sel, timeout=15000)
                     if el:
                         logger.info(f"Champ username trouvé : {sel}")
                         username_input = el
@@ -115,11 +127,30 @@ class LoginManager:
                 except Exception:
                     continue
 
+            # Fallback JS : chercher n'importe quel input non-password visible
+            if not username_input:
+                try:
+                    all_inputs = await page.query_selector_all('input')
+                    logger.info(f"Fallback JS : {len(all_inputs)} inputs détectés")
+                    for inp in all_inputs:
+                        try:
+                            inp_type = await inp.get_attribute("type") or "text"
+                            is_vis   = await inp.is_visible()
+                            logger.debug(f"  input type={inp_type} visible={is_vis}")
+                            if is_vis and inp_type not in ("password", "hidden", "submit", "checkbox", "radio", "button"):
+                                username_input = inp
+                                logger.info(f"Username trouvé via fallback JS (type={inp_type})")
+                                break
+                        except Exception:
+                            continue
+                except Exception as e:
+                    logger.error(f"Fallback JS échoué : {e}")
+
             if not username_input:
                 page_html = await page.content()
                 logger.error(
                     f"Champ username introuvable. URL={current_url} "
-                    f"| HTML début: {page_html[:600]}"
+                    f"| HTML début: {page_html[:800]}"
                 )
                 await _take_debug_screenshot(page, "login_failed_no_input")
                 log_error("login_no_input", f"Username input not found on {current_url}", "login")
