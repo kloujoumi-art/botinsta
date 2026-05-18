@@ -7,7 +7,8 @@ from datetime import date, datetime
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 
-DB_PATH = Path("./data/botinsta.db")
+import os
+DB_PATH = Path(os.getenv("DATA_DIR", "./data")) / "botinsta.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS actions (

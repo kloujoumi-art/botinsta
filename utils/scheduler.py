@@ -9,11 +9,10 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Plages horaires actives par défaut (réalistes pour un utilisateur humain)
+# Plages horaires actives — couvre toute la journée sur serveur cloud
+# Le bot tourne 24h/24 par défaut ; les délais aléatoires simulent le comportement humain
 DEFAULT_ACTIVE_HOURS: List[Tuple[int, int]] = [
-    (7, 9),    # Matin
-    (12, 14),  # Pause déjeuner
-    (18, 22),  # Soirée
+    (0, 24),
 ]
 
 

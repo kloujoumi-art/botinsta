@@ -1,34 +1,42 @@
 # =============================================================
-#  BotInsta — Configuration Render.com (Docker)
+#  BotInsta — Configuration Render.com
 # =============================================================
 
 services:
   - type: web
     name: botinsta
-    env: docker               # ← utilise le Dockerfile
+    env: python
     region: frankfurt
+    buildCommand: "pip install -r requirements.txt && PLAYWRIGHT_BROWSERS_PATH=./pw-browsers python -m playwright install chromium"
+    startCommand: "python main.py --mode both"
     healthCheckPath: /health
 
     envVars:
-      # ── Navigateur (obligatoire) ──────────────────────────────
+      # Navigateur
       - key: HEADLESS
         value: "true"
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "/opt/render/project/src/pw-browsers"
 
-      # ── Flask (obligatoire sur Render) ────────────────────────
+      # Flask
       - key: DASHBOARD_HOST
         value: "0.0.0.0"
 
-      # ── Identifiants Instagram (saisir dans le dashboard Render) ──
+      # Identifiants Instagram
       - key: INSTAGRAM_USERNAME
         sync: false
       - key: INSTAGRAM_PASSWORD
         sync: false
 
-      # ── Comptes cibles ────────────────────────────────────────
+      # Session cookie (copier depuis le navigateur)
+      - key: INSTAGRAM_SESSIONID
+        sync: false
+
+      # Comptes cibles
       - key: TARGET_ACCOUNTS
         sync: false
 
-      # ── Limites journalières ──────────────────────────────────
+      # Limites journalieres
       - key: MAX_FOLLOWS_PER_DAY
         value: "25"
       - key: MAX_LIKES_PER_DAY
@@ -40,23 +48,18 @@ services:
       - key: MAX_REELS_PER_DAY
         value: "30"
 
-      # ── Stockage persistant ───────────────────────────────────
+      # Stockage (relatif au dossier app — fonctionne sans disque paye)
       - key: DATA_DIR
-        value: "/data"
+        value: "./data"
       - key: SESSIONS_DIR
-        value: "/data/sessions"
+        value: "./data/sessions"
       - key: LOG_FILE
-        value: "/data/botinsta.log"
+        value: "./data/botinsta.log"
 
-      # ── Proxy optionnel ───────────────────────────────────────
+      # Proxy optionnel
       - key: PROXY_URL
         value: ""
 
-      # ── Logs ──────────────────────────────────────────────────
+      # Logs
       - key: LOG_LEVEL
         value: "INFO"
-
-    disk:
-      name: botinsta-data
-      mountPath: /data
-      sizeGB: 1
