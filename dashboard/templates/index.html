@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BotInsta Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d0d1a;
+      --card: #14142a;
+      --card-border: #252545;
+      --accent: #7c6aff;
+      --accent2: #a855f7;
+      --text: #e2e2f0;
+      --muted: #6b6b8a;
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; }
+
+    /* Navbar */
+    .navbar {
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+      padding: 12px 24px;
+      display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 4px 20px rgba(79,70,229,.4);
+    }
+    .navbar-brand { font-size: 1.4rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
+    .status-badge { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,.3); border-radius: 20px; padding: 6px 14px; font-size: .85rem; }
+    .status-dot { width: 9px; height: 9px; border-radius: 50%; }
+    .dot-running { background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: blink 1.4s infinite; }
+    .dot-paused  { background: #f59e0b; }
+    .dot-stopped { background: #ef4444; }
+    @keyframes blink { 0%,100% { opacity:1 } 50% { opacity:.35 } }
+
+    /* Cards */
+    .card-custom {
+      background: var(--card); border: 1px solid var(--card-border);
+      border-radius: 14px; padding: 20px;
+      transition: transform .18s, box-shadow .18s;
+    }
+    .card-custom:hover { transform: translateY(-3px); box-shadow: 0 8px 30px rgba(124,106,255,.15); }
+
+    /* Stat numbers */
+    .stat-num {
+      font-size: 2.6rem; font-weight: 800;
+      background: linear-gradient(135deg, #7c6aff, #a855f7);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .stat-label { color: var(--muted); font-size: .82rem; margin-top: 4px; }
+    .progress-thin { height: 5px; background: rgba(255,255,255,.06); border-radius: 4px; margin-top: 10px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 4px; transition: width .5s ease; }
+
+    /* Section headers */
+    .section-header {
+      background: var(--card); border: 1px solid var(--card-border);
+      border-radius: 14px 14px 0 0; padding: 14px 20px;
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .section-body { background: var(--card); border: 1px solid var(--card-border); border-top: none; border-radius: 0 0 14px 14px; padding: 16px; }
+
+    /* Action items */
+    .action-item {
+      border-left: 3px solid var(--accent); padding: 8px 14px;
+      margin-bottom: 6px; background: #1c1c36; border-radius: 0 8px 8px 0;
+      font-size: .84rem;
+    }
+    .action-item.error   { border-left-color: #ef4444; }
+    .action-item.success { border-left-color: #22c55e; }
+    .action-meta { color: var(--muted); font-size: .75rem; }
+
+    /* Input */
+    .input-dark { background: #1c1c36 !important; border-color: var(--card-border) !important; color: var(--text) !important; }
+    .input-dark::placeholder { color: var(--muted); }
+    .input-dark:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 .2rem rgba(124,106,255,.25) !important; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 3px; }
+
+    .btn-ctrl { border-radius: 20px; padding: 6px 18px; font-size: .85rem; }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<div class="navbar">
+  <div class="navbar-brand">
+    <i class="fab fa-instagram"></i> BotInsta
+    <div class="status-badge">
+      <div class="status-dot dot-stopped" id="status-dot"></div>
+      <span id="status-text">Chargement…</span>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-warning btn-ctrl" id="btn-pause" onclick="pauseBot()">
+      <i class="fas fa-pause me-1"></i>Pause
+    </button>
+    <button class="btn btn-sm btn-success btn-ctrl" id="btn-resume" onclick="resumeBot()" style="display:none">
+      <i class="fas fa-play me-1"></i>Reprendre
+    </button>
+  </div>
+</div>
+
+<div class="container-fluid p-4">
+
+  <!-- Stat Cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-4 col-xl-2">
+      <div class="card-custom text-center">
+        <div class="stat-num" id="s-follows">0</div>
+        <div class="stat-label"><i class="fas fa-user-plus me-1"></i>Follows</div>
+        <div class="progress-thin"><div class="progress-fill" id="p-follows" style="background:#7c6aff;width:0%"></div></div>
+        <div class="action-meta mt-1" id="r-follows">0 restants</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+      <div class="card-custom text-center">
+        <div class="stat-num" id="s-likes">0</div>
+        <div class="stat-label"><i class="fas fa-heart me-1"></i>Likes</div>
+        <div class="progress-thin"><div class="progress-fill" id="p-likes" style="background:#ef4444;width:0%"></div></div>
+        <div class="action-meta mt-1" id="r-likes">0 restants</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+      <div class="card-custom text-center">
+        <div class="stat-num" id="s-visits">0</div>
+        <div class="stat-label"><i class="fas fa-eye me-1"></i>Visites</div>
+        <div class="progress-thin"><div class="progress-fill" id="p-visits" style="background:#3b82f6;width:0%"></div></div>
+        <div class="action-meta mt-1" id="r-visits">0 restants</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+      <div class="card-custom text-center">
+        <div class="stat-num" id="s-stories">0</div>
+        <div class="stat-label"><i class="fas fa-circle me-1"></i>Stories</div>
+        <div class="progress-thin"><div class="progress-fill" id="p-stories" style="background:#f59e0b;width:0%"></div></div>
+        <div class="action-meta mt-1" id="r-stories">0 restants</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+      <div class="card-custom text-center">
+        <div class="stat-num" id="s-reels">0</div>
+        <div class="stat-label"><i class="fas fa-play me-1"></i>Reels</div>
+        <div class="progress-thin"><div class="progress-fill" id="p-reels" style="background:#22c55e;width:0%"></div></div>
+        <div class="action-meta mt-1" id="r-reels">0 restants</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+      <div class="card-custom text-center">
+        <div class="stat-num" id="s-targets" style="background:linear-gradient(135deg,#22c55e,#16a34a);-webkit-background-clip:text">0</div>
+        <div class="stat-label"><i class="fas fa-crosshairs me-1"></i>Cibles en attente</div>
+        <div class="action-meta mt-2" id="s-targets-info">–</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="row g-3">
+
+    <!-- Actions log -->
+    <div class="col-12 col-lg-8">
+      <div class="section-header">
+        <strong><i class="fas fa-list me-2"></i>Journal des actions</strong>
+        <span class="action-meta" id="last-update">–</span>
+      </div>
+      <div class="section-body" style="max-height:440px;overflow-y:auto" id="actions-log">
+        <div class="text-center action-meta py-4">Chargement…</div>
+      </div>
+    </div>
+
+    <!-- Side panel -->
+    <div class="col-12 col-lg-4 d-flex flex-column gap-3">
+
+      <!-- Add target -->
+      <div class="card-custom">
+        <div class="fw-semibold mb-3"><i class="fas fa-plus-circle me-2 text-success"></i>Ajouter une cible</div>
+        <div class="input-group">
+          <span class="input-group-text bg-dark border-secondary text-muted">@</span>
+          <input type="text" class="form-control input-dark" id="new-target" placeholder="username" onkeyup="if(event.key==='Enter') addTarget()">
+          <button class="btn btn-primary" onclick="addTarget()"><i class="fas fa-plus"></i></button>
+        </div>
+        <div class="action-meta mt-2" id="add-target-msg"></div>
+      </div>
+
+      <!-- Errors -->
+      <div>
+        <div class="section-header">
+          <strong><i class="fas fa-exclamation-triangle me-2 text-warning"></i>Erreurs récentes</strong>
+        </div>
+        <div class="section-body" style="max-height:320px;overflow-y:auto" id="errors-log">
+          <div class="text-center action-meta py-3">Aucune erreur</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+const ACTION_ICONS = {
+  follow: 'fa-user-plus', like: 'fa-heart', visit_profile: 'fa-eye',
+  view_story: 'fa-circle', view_reel: 'fa-play', scroll_feed: 'fa-scroll',
+  login: 'fa-sign-in-alt', scrape_followers: 'fa-search',
+  session_restore: 'fa-cookie-bite', like_post: 'fa-heart',
+};
+
+function pct(val, max) { return max > 0 ? Math.min(100, (val / max) * 100).toFixed(1) : 0; }
+function fmt(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + (dateStr.includes('+') ? '' : 'Z'));
+  return d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+async function fetchStats() {
+  const res = await fetch('/api/stats').catch(() => null);
+  if (!res) return;
+  const d = await res.json();
+  const t = d.today || {}, lim = d.limits || {}, rem = d.remaining || {};
+
+  // Stat numbers
+  [['follows','s-follows','p-follows','r-follows'],
+   ['likes','s-likes','p-likes','r-likes'],
+   ['profile_visits','s-visits','p-visits','r-visits'],
+   ['stories_viewed','s-stories','p-stories','r-stories'],
+   ['reels_viewed','s-reels','p-reels','r-reels']].forEach(([key,sid,pid,rid]) => {
+    const k2 = key.replace('_viewed','').replace('profile_','');
+    const limKey = key === 'profile_visits' ? 'profile_visits' : (key.replace('_viewed','') + 's');
+    document.getElementById(sid).textContent = t[key] ?? 0;
+    document.getElementById(pid).style.width = pct(t[key]??0, lim[k2] ?? lim[limKey] ?? 1) + '%';
+    document.getElementById(rid).textContent = (rem[k2] ?? rem[limKey] ?? 0) + ' restants';
+  });
+
+  // Status dot
+  const dot = document.getElementById('status-dot');
+  const txt = document.getElementById('status-text');
+  const bp  = document.getElementById('btn-pause');
+  const br  = document.getElementById('btn-resume');
+  const status = d.bot_status || 'stopped';
+
+  dot.className = 'status-dot ' + (status === 'running' ? 'dot-running' : status === 'paused' ? 'dot-paused' : 'dot-stopped');
+  txt.textContent = { running: 'En cours', paused: 'En pause', stopped: 'Arrêté' }[status] || status;
+  bp.style.display = status === 'running' ? '' : 'none';
+  br.style.display = status === 'paused'  ? '' : 'none';
+}
+
+async function fetchActions() {
+  const res = await fetch('/api/actions?limit=60').catch(() => null);
+  if (!res) return;
+  const actions = await res.json();
+  const el = document.getElementById('actions-log');
+  document.getElementById('last-update').textContent = 'mis à jour ' + fmt(new Date().toISOString());
+  if (!actions.length) { el.innerHTML = '<div class="text-center action-meta py-4">Aucune action</div>'; return; }
+  el.innerHTML = actions.map(a => {
+    const icon = ACTION_ICONS[a.action_type] || 'fa-circle';
+    const cls  = a.status === 'success' ? 'success' : 'error';
+    return `<div class="action-item ${cls}">
+      <div class="d-flex justify-content-between">
+        <span><i class="fas ${icon} me-2 ${cls === 'success' ? 'text-success' : 'text-danger'}"></i>
+          <strong>${a.action_type}</strong>${a.target ? ` <span class="action-meta">@${a.target}</span>` : ''}
+        </span>
+        <span class="action-meta">${fmt(a.created_at)}</span>
+      </div>${a.details ? `<div class="action-meta ms-4">${a.details}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function fetchErrors() {
+  const res = await fetch('/api/errors?limit=20').catch(() => null);
+  if (!res) return;
+  const errs = await res.json();
+  const el = document.getElementById('errors-log');
+  if (!errs.length) { el.innerHTML = '<div class="text-center action-meta py-3">Aucune erreur ✓</div>'; return; }
+  el.innerHTML = errs.map(e => `
+    <div class="action-item error mb-2">
+      <div class="text-danger fw-semibold" style="font-size:.8rem">${e.error_type || 'Erreur'}</div>
+      <div style="font-size:.8rem">${(e.message || '').substring(0,120)}</div>
+      <div class="action-meta">${fmt(e.created_at)}</div>
+    </div>`).join('');
+}
+
+async function fetchTargets() {
+  const res = await fetch('/api/targets').catch(() => null);
+  if (!res) return;
+  const t = await res.json();
+  document.getElementById('s-targets').textContent = t.pending ?? 0;
+  document.getElementById('s-targets-info').textContent =
+    `Total: ${t.total??0} | Suivis: ${t.followed??0} | Ignorés: ${t.skipped??0}`;
+}
+
+async function pauseBot() { await fetch('/api/bot/pause', {method:'POST'}); fetchStats(); }
+async function resumeBot() { await fetch('/api/bot/resume', {method:'POST'}); fetchStats(); }
+
+async function addTarget() {
+  const inp  = document.getElementById('new-target');
+  const msg  = document.getElementById('add-target-msg');
+  const user = inp.value.replace('@','').trim();
+  if (!user) return;
+  const res = await fetch('/api/targets/add', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({username: user})
+  }).catch(() => null);
+  if (!res) return;
+  const data = await res.json();
+  if (data.status === 'added') {
+    msg.textContent = `✓ @${user} ajouté`;
+    msg.style.color = '#22c55e';
+    inp.value = '';
+    fetchTargets();
+  } else {
+    msg.textContent = data.error || 'Erreur';
+    msg.style.color = '#ef4444';
+  }
+  setTimeout(() => { msg.textContent = ''; }, 3000);
+}
+
+function refresh() { fetchStats(); fetchActions(); fetchErrors(); fetchTargets(); }
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

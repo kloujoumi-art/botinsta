@@ -1,0 +1,39 @@
+# Identifiants — NE JAMAIS COMMITTER
+.env
+
+# Données locales
+data/
+*.db
+*.log
+
+# Sessions Instagram (cookies sensibles)
+data/sessions/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Playwright
+.playwright/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

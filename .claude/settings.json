@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(pip *)",
+      "Bash(playwright *)",
+      "Bash(mkdir *)",
+      "Bash(ls *)",
+      "Bash(dir *)",
+      "Bash(python3 *)",
+      "Bash(pip3 *)"
+    ]
+  }
+}

@@ -1,0 +1,62 @@
+# =============================================================
+#  BotInsta — Configuration Render.com (Docker)
+# =============================================================
+
+services:
+  - type: web
+    name: botinsta
+    env: docker               # ← utilise le Dockerfile
+    region: frankfurt
+    healthCheckPath: /health
+
+    envVars:
+      # ── Navigateur (obligatoire) ──────────────────────────────
+      - key: HEADLESS
+        value: "true"
+
+      # ── Flask (obligatoire sur Render) ────────────────────────
+      - key: DASHBOARD_HOST
+        value: "0.0.0.0"
+
+      # ── Identifiants Instagram (saisir dans le dashboard Render) ──
+      - key: INSTAGRAM_USERNAME
+        sync: false
+      - key: INSTAGRAM_PASSWORD
+        sync: false
+
+      # ── Comptes cibles ────────────────────────────────────────
+      - key: TARGET_ACCOUNTS
+        sync: false
+
+      # ── Limites journalières ──────────────────────────────────
+      - key: MAX_FOLLOWS_PER_DAY
+        value: "25"
+      - key: MAX_LIKES_PER_DAY
+        value: "40"
+      - key: MAX_PROFILE_VISITS_PER_DAY
+        value: "80"
+      - key: MAX_STORIES_PER_DAY
+        value: "50"
+      - key: MAX_REELS_PER_DAY
+        value: "30"
+
+      # ── Stockage persistant ───────────────────────────────────
+      - key: DATA_DIR
+        value: "/data"
+      - key: SESSIONS_DIR
+        value: "/data/sessions"
+      - key: LOG_FILE
+        value: "/data/botinsta.log"
+
+      # ── Proxy optionnel ───────────────────────────────────────
+      - key: PROXY_URL
+        value: ""
+
+      # ── Logs ──────────────────────────────────────────────────
+      - key: LOG_LEVEL
+        value: "INFO"
+
+    disk:
+      name: botinsta-data
+      mountPath: /data
+      sizeGB: 1
