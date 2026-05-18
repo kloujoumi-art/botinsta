@@ -113,12 +113,25 @@
 </div>
 
 <!-- Screenshot modal -->
-<div id="screenshot-overlay" onclick="this.style.display='none'"
-     style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:none;align-items:center;justify-content:center;cursor:zoom-out">
-  <div style="max-width:90vw;max-height:90vh;text-align:center">
-    <div id="screenshot-tabs" style="margin-bottom:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap"></div>
-    <img id="screenshot-img" src="" style="max-width:100%;max-height:80vh;border-radius:10px;border:2px solid #7c6aff" alt="Screenshot">
-    <div style="color:#a0a0c0;font-size:.8rem;margin-top:8px">Cliquez pour fermer</div>
+<div id="screenshot-overlay"
+     style="position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9999;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto">
+  <div style="max-width:95vw;width:100%;text-align:center" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div id="screenshot-tabs" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+      <div style="display:flex;gap:8px">
+        <a id="screenshot-link" href="#" target="_blank"
+           style="background:#1c1c36;border:1px solid #7c6aff;color:#a0a0c0;border-radius:8px;padding:6px 14px;font-size:.8rem;text-decoration:none">
+          Ouvrir dans un onglet
+        </a>
+        <button onclick="document.getElementById('screenshot-overlay').style.display='none'"
+                style="background:#ef4444;border:none;color:#fff;border-radius:8px;padding:6px 14px;font-size:.8rem;cursor:pointer">
+          Fermer
+        </button>
+      </div>
+    </div>
+    <div id="screenshot-status" style="color:#f59e0b;font-size:.85rem;margin-bottom:8px"></div>
+    <img id="screenshot-img" src="" style="max-width:100%;border-radius:10px;border:2px solid #7c6aff;display:none"
+         alt="Screenshot" onerror="this.style.display='none';document.getElementById('screenshot-status').textContent='Image introuvable — le bot n\'a pas encore pris de screenshot'">
   </div>
 </div>
 
@@ -351,28 +364,51 @@ async function addTarget() {
 
 async function openScreenshot() {
   const overlay = document.getElementById('screenshot-overlay');
-  const img     = document.getElementById('screenshot-img');
+  const status  = document.getElementById('screenshot-status');
   const tabs    = document.getElementById('screenshot-tabs');
   overlay.style.display = 'flex';
+  status.textContent = 'Chargement de la liste…';
+  tabs.innerHTML = '';
 
-  // Charger la liste des screenshots disponibles
-  const res = await fetch('/api/screenshots').catch(() => null);
-  const names = res ? await res.json() : ['login_page'];
+  let names = [];
+  try {
+    const res = await fetch('/api/screenshots');
+    names = await res.json();
+  } catch(e) {
+    names = [];
+  }
 
-  tabs.innerHTML = names.map(n =>
-    `<button onclick="loadScreenshot('${n}',this)"
+  if (!names.length) {
+    status.textContent = 'Aucun screenshot disponible — attends que le bot tente une connexion.';
+    return;
+  }
+
+  status.textContent = '';
+  tabs.innerHTML = names.map((n, i) =>
+    `<button id="tab-${i}" onclick="loadScreenshot('${n}', 'tab-${i}')"
       style="background:#1c1c36;border:1px solid #252545;color:#a0a0c0;border-radius:8px;padding:4px 12px;font-size:.8rem;cursor:pointer"
     >${n}</button>`
   ).join('');
 
-  // Charger le premier par défaut
-  if (names.length) loadScreenshot(names[names.length - 1], tabs.lastChild);
+  // Charger le dernier screenshot (le plus récent)
+  loadScreenshot(names[names.length - 1], `tab-${names.length - 1}`);
 }
 
-function loadScreenshot(name, btn) {
-  document.getElementById('screenshot-img').src = `/api/screenshot?name=${name}&t=${Date.now()}`;
+function loadScreenshot(name, tabId) {
+  const url = `/api/screenshot?name=${name}&t=${Date.now()}`;
+  const img  = document.getElementById('screenshot-img');
+  const link = document.getElementById('screenshot-link');
+  const status = document.getElementById('screenshot-status');
+
+  img.style.display = 'none';
+  status.textContent = 'Chargement de l\'image…';
+  img.onload = () => { img.style.display = 'block'; status.textContent = ''; };
+  img.src  = url;
+  link.href = url;
+
   document.querySelectorAll('#screenshot-tabs button').forEach(b => b.style.borderColor = '#252545');
-  if (btn) btn.style.borderColor = '#7c6aff';
+  const activeTab = document.getElementById(tabId);
+  if (activeTab) activeTab.style.borderColor = '#7c6aff';
 }
 
 function refresh() { fetchStats(); fetchActions(); fetchErrors(); fetchTargets(); }

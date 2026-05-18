@@ -29,7 +29,7 @@ async def _take_debug_screenshot(page, name: str) -> None:
         await page.screenshot(path=path, full_page=False)
         logger.info(f"Screenshot sauvegardé → {path}")
     except Exception as e:
-        logger.debug(f"Screenshot impossible ({name}) : {e}")
+        logger.warning(f"Screenshot impossible ({name}) : {e}")
 
 
 class LoginManager:
