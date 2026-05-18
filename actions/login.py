@@ -1,5 +1,10 @@
 """
-Gestion de la connexion Instagram avec persistance de session (cookies).
+Gestion de la connexion Instagram.
+
+Ordre de tentative :
+  1. Restauration de session (cookies existants)
+  2. API Instagram via instagrapi  ← principal (contourne Chrome Headless Shell)
+  3. Navigateur (fallback — peu fiable sur IP cloud)
 """
 import asyncio
 import random
@@ -41,12 +46,19 @@ class LoginManager:
     async def login(self) -> bool:
         page = self.browser.page
 
-        # Essayer d'abord la session sauvegardée
+        # 1. Restauration de session existante
         if await self._try_restore_session(page):
             return True
 
-        # Connexion classique
-        return await self._do_login(page)
+        # 2. API Instagram (principal — fiable depuis les IPs cloud)
+        if await self._api_login(page):
+            return True
+
+        # 3. Formulaire navigateur (fallback)
+        logger.warning("Tentative de connexion via le formulaire navigateur (fallback)...")
+        return await self._browser_login(page)
+
+    # ── Méthode 1 : restauration de session ──────────────────────────────────
 
     async def _try_restore_session(self, page: Page) -> bool:
         if not Path(self.session_file).exists():
@@ -65,24 +77,57 @@ class LoginManager:
         logger.info("Session expirée, nouvelle connexion nécessaire")
         return False
 
-    async def _do_login(self, page: Page) -> bool:
-        logger.info("Connexion à Instagram...")
-        try:
-            # Passage par la page d'accueil pour établir l'état JS/cookies initial
-            try:
-                await page.goto(INSTAGRAM_URL, wait_until="domcontentloaded", timeout=30000)
-                await random_sleep(2, 4)
-            except Exception:
-                pass
+    # ── Méthode 2 : API Instagram (instagrapi) ────────────────────────────────
 
-            # Navigation vers le login
+    async def _api_login(self, page: Page) -> bool:
+        logger.info("Connexion via l'API Instagram (instagrapi)...")
+        try:
+            from actions.api_login import api_login_cookies
+
+            cookies = await api_login_cookies(
+                self.settings.instagram_username,
+                self.settings.instagram_password,
+                self.session_file,
+            )
+
+            if not cookies:
+                logger.warning("API login : aucun cookie retourné")
+                return False
+
+            # Injecter les cookies dans le contexte Playwright
+            await page.context.add_cookies(cookies)
+
+            # Naviguer vers Instagram pour vérifier l'authentification
+            await page.goto(INSTAGRAM_URL, wait_until="domcontentloaded", timeout=45000)
+            await random_sleep(4, 7)
+            await _take_debug_screenshot(page, "api_login_result")
+
+            if await self._is_logged_in(page):
+                logger.info("Connexion API réussie ✓")
+                log_action("login", status="success", details="api_login")
+                await self.browser.save_cookies(self.session_file)
+                await self._handle_post_login_prompts(page)
+                return True
+
+            logger.warning("API login : cookies injectés mais non connecté")
+            return False
+
+        except Exception as e:
+            logger.warning(f"API login échoué : {e}")
+            log_error("api_login_error", str(e), "login")
+            return False
+
+    # ── Méthode 3 : formulaire navigateur (fallback) ─────────────────────────
+
+    async def _browser_login(self, page: Page) -> bool:
+        try:
             await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
             try:
                 await page.wait_for_load_state("load", timeout=25000)
             except Exception:
                 pass
 
-            await random_sleep(7, 11)  # laisser React hydrater le DOM
+            await random_sleep(7, 11)
 
             current_url = page.url
             page_title = await page.title()
@@ -90,87 +135,45 @@ class LoginManager:
 
             await self._handle_cookie_banner(page)
 
-            # Audit JS : compter les inputs réellement dans le DOM
-            try:
-                n_inputs = await page.evaluate("document.querySelectorAll('input').length")
-                logger.info(f"Inputs trouvés dans le DOM (JS) : {n_inputs}")
-            except Exception:
-                pass
+            n_inputs = await page.evaluate("document.querySelectorAll('input').length")
+            logger.info(f"Inputs dans le DOM : {n_inputs}")
 
-            # Attendre que le formulaire de connexion soit présent dans le DOM
             try:
                 await page.wait_for_selector('form', timeout=20000)
-                logger.info("Formulaire <form> détecté dans le DOM")
                 await random_sleep(2, 3)
             except Exception:
-                logger.warning("Aucun <form> trouvé après 20s")
+                logger.warning("Aucun <form> trouvé")
 
-            # Screenshot pour voir ce que le bot voit réellement
-            await _take_debug_screenshot(page, "login_page")
+            await _take_debug_screenshot(page, "browser_login_page")
 
-            # Chercher le champ username avec plusieurs sélecteurs de secours
+            # Trouver le champ username
             username_input = None
-            username_selectors = [
+            for sel in [
                 'input[name="username"]',
                 'input[aria-label="Phone number, username, or email"]',
-                'input[aria-label="Numéro de téléphone, nom d\'utilisateur ou adresse e-mail"]',
                 'input[autocomplete="username"]',
-            ]
-
-            for sel in username_selectors:
+                'input[type="text"]',
+            ]:
                 try:
-                    el = await page.wait_for_selector(sel, timeout=15000)
+                    el = await page.wait_for_selector(sel, timeout=12000)
                     if el:
-                        logger.info(f"Champ username trouvé : {sel}")
                         username_input = el
                         break
                 except Exception:
                     continue
 
-            # Fallback JS : chercher n'importe quel input non-password visible
             if not username_input:
-                try:
-                    all_inputs = await page.query_selector_all('input')
-                    logger.info(f"Fallback JS : {len(all_inputs)} inputs détectés")
-                    for inp in all_inputs:
-                        try:
-                            inp_type = await inp.get_attribute("type") or "text"
-                            is_vis   = await inp.is_visible()
-                            logger.debug(f"  input type={inp_type} visible={is_vis}")
-                            if is_vis and inp_type not in ("password", "hidden", "submit", "checkbox", "radio", "button"):
-                                username_input = inp
-                                logger.info(f"Username trouvé via fallback JS (type={inp_type})")
-                                break
-                        except Exception:
-                            continue
-                except Exception as e:
-                    logger.error(f"Fallback JS échoué : {e}")
-
-            if not username_input:
-                page_html = await page.content()
-                logger.error(
-                    f"Champ username introuvable. URL={current_url} "
-                    f"| HTML début: {page_html[:800]}"
-                )
-                await _take_debug_screenshot(page, "login_failed_no_input")
-                log_error("login_no_input", f"Username input not found on {current_url}", "login")
+                await _take_debug_screenshot(page, "browser_login_no_input")
+                log_error("browser_login_no_input", f"Username input not found on {current_url}", "login")
                 return False
 
             await username_input.click()
             await micro_pause()
             await type_like_human(username_input, self.settings.instagram_username)
-
             await random_sleep(0.8, 2.0)
 
-            # Password
             password_input = None
-            password_selectors = [
-                'input[name="password"]',
-                'input[type="password"]',
-                'input[aria-label="Password"]',
-                'input[aria-label="Mot de passe"]',
-            ]
-            for sel in password_selectors:
+            for sel in ['input[name="password"]', 'input[type="password"]']:
                 try:
                     el = await page.wait_for_selector(sel, timeout=8000)
                     if el:
@@ -180,25 +183,16 @@ class LoginManager:
                     continue
 
             if not password_input:
-                logger.error("Champ password introuvable")
-                log_error("login_no_password", "Password input not found", "login")
+                log_error("browser_login_no_password", "Password input not found", "login")
                 return False
 
             await password_input.click()
             await micro_pause()
             await type_like_human(password_input, self.settings.instagram_password)
-
             await random_sleep(1.0, 2.5)
 
-            # Soumettre
             submit_btn = None
-            submit_selectors = [
-                'button[type="submit"]',
-                'button:has-text("Log in")',
-                'button:has-text("Connexion")',
-                'button:has-text("Se connecter")',
-            ]
-            for sel in submit_selectors:
+            for sel in ['button[type="submit"]', 'button:has-text("Log in")', 'button:has-text("Connexion")']:
                 try:
                     el = await page.wait_for_selector(sel, timeout=5000)
                     if el:
@@ -208,37 +202,36 @@ class LoginManager:
                     continue
 
             if not submit_btn:
-                logger.error("Bouton submit introuvable")
-                log_error("login_no_submit", "Submit button not found", "login")
+                log_error("browser_login_no_submit", "Submit button not found", "login")
                 return False
 
             await submit_btn.click()
-
             await random_sleep(6, 10)
             await self._handle_post_login_prompts(page)
 
             if await self._is_logged_in(page):
-                logger.info("Connexion réussie ✓")
-                log_action("login", status="success")
+                logger.info("Connexion navigateur réussie ✓")
+                log_action("login", status="success", details="browser_login")
                 await self.browser.save_cookies(self.session_file)
                 await _take_debug_screenshot(page, "login_success")
                 return True
 
-            await _take_debug_screenshot(page, "login_failed_post_submit")
-            logger.error("Échec de connexion — vérifiez vos identifiants dans .env")
-            log_error("login_failed", "Connexion échouée après soumission du formulaire", "login")
+            await _take_debug_screenshot(page, "browser_login_failed")
+            log_error("browser_login_failed", "Connexion échouée après soumission", "login")
             return False
 
         except Exception as e:
-            logger.error(f"Erreur lors de la connexion : {e}")
-            log_error("login_exception", str(e), "login")
+            logger.error(f"Erreur lors de la connexion navigateur : {e}")
+            log_error("browser_login_exception", str(e), "login")
             return False
+
+    # ── Utilitaires ───────────────────────────────────────────────────────────
 
     async def _is_logged_in(self, page: Page) -> bool:
         try:
             await page.wait_for_selector(
                 '[aria-label="Page d\'accueil"], [aria-label="Home"], svg[aria-label="Home"], nav',
-                timeout=6000,
+                timeout=8000,
             )
             return True
         except Exception:
@@ -251,13 +244,12 @@ class LoginManager:
             )
 
     async def _handle_cookie_banner(self, page: Page) -> None:
-        cookie_selectors = [
+        for sel in [
             'button:has-text("Tout accepter")',
             'button:has-text("Accept all")',
             'button:has-text("Allow all cookies")',
             '[data-testid="cookie-policy-manage-dialog-accept-button"]',
-        ]
-        for sel in cookie_selectors:
+        ]:
             try:
                 btn = page.locator(sel).first
                 if await btn.is_visible(timeout=3000):
@@ -269,24 +261,14 @@ class LoginManager:
                 continue
 
     async def _handle_post_login_prompts(self, page: Page) -> None:
-        """Fermer les popups post-connexion ('Enregistrer les infos', 'Notifications')."""
-        dismiss_texts = [
-            "Plus tard",
-            "Not now",
-            "Not Now",
-            "Pas maintenant",
-            "Ignorer",
-            "Skip",
-        ]
         for _ in range(4):
             await random_sleep(2, 4)
             dismissed = False
-            for text in dismiss_texts:
+            for text in ["Plus tard", "Not now", "Not Now", "Pas maintenant", "Ignorer", "Skip"]:
                 try:
                     btn = page.locator(f'button:has-text("{text}")').first
                     if await btn.is_visible(timeout=2000):
                         await btn.click()
-                        logger.debug(f"Popup fermé : '{text}'")
                         dismissed = True
                         break
                 except Exception:
