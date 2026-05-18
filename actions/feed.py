@@ -25,7 +25,7 @@ class FeedAction:
                 await random_sleep(3, 6)
 
             logger.info("Défilement du feed...")
-            await scroll_feed(self.page, times=random.randint(3, 8))
+            await scroll_feed(self.page, times=random.randint(2, 3))
 
             # Parfois effectuer une action aléatoire d'inactivité
             if random.random() < 0.3:
