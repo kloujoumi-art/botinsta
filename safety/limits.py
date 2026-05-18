@@ -1,10 +1,8 @@
 """
 Contrôle des limites journalières pour éviter les blocages Instagram.
-Les limites varient aléatoirement chaque jour (même graine = mêmes valeurs dans la journée).
+Les limites sont tirées aléatoirement à chaque démarrage du bot.
 """
-import hashlib
 import random
-from datetime import date
 
 from storage.database import get_today_stats, increment_stat
 from config.settings import get_settings
@@ -13,22 +11,10 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def _day_rng() -> random.Random:
-    """RNG déterministe pour la journée en cours — change chaque jour automatiquement."""
-    seed = int(hashlib.md5(date.today().isoformat().encode()).hexdigest(), 16) % (2 ** 32)
-    return random.Random(seed)
-
-
-def _daily_limit(max_val: int, floor_ratio: float = 0.55) -> int:
-    """Retourne un plafond aléatoire entre floor_ratio*max et max pour aujourd'hui."""
-    rng = _day_rng()
-    return rng.randint(int(max_val * floor_ratio), max_val)
-
-
 class DailyLimits:
     def __init__(self):
         self.settings = get_settings()
-        self._limits = self._compute_today_limits()
+        self._limits = self._compute_limits()
         logger.info(
             f"Limites du jour — "
             f"Follows:{self._limits['follows']} "
@@ -38,23 +24,18 @@ class DailyLimits:
             f"Reels:{self._limits['reels']}"
         )
 
-    def _compute_today_limits(self) -> dict:
+    def _compute_limits(self) -> dict:
         cfg = self.settings
-        rng = _day_rng()
 
-        # Chaque limite varie entre 55 % et 100 % du maximum configuré
-        follows = rng.randint(int(cfg.max_follows_per_day * 0.55), cfg.max_follows_per_day)
-        likes   = rng.randint(int(cfg.max_likes_per_day * 0.55),   cfg.max_likes_per_day)
-        visits  = rng.randint(int(cfg.max_profile_visits_per_day * 0.55), cfg.max_profile_visits_per_day)
-        stories = rng.randint(int(cfg.max_stories_per_day * 0.55), cfg.max_stories_per_day)
-        reels   = rng.randint(int(cfg.max_reels_per_day * 0.55),   cfg.max_reels_per_day)
+        def rnd(max_val: int) -> int:
+            return random.randint(int(max_val * 0.55), max_val)
 
         return {
-            "follows":        follows,
-            "likes":          likes,
-            "profile_visits": visits,
-            "stories":        stories,
-            "reels":          reels,
+            "follows":        rnd(cfg.max_follows_per_day),
+            "likes":          rnd(cfg.max_likes_per_day),
+            "profile_visits": rnd(cfg.max_profile_visits_per_day),
+            "stories":        rnd(cfg.max_stories_per_day),
+            "reels":          rnd(cfg.max_reels_per_day),
         }
 
     def _stats(self) -> dict:

@@ -1,24 +1,19 @@
-import hashlib
 import random
-from datetime import date
 from facebook.database import fb_get_today_stats, fb_increment_stat
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-def _day_rng() -> random.Random:
-    seed = int(hashlib.md5(("fb" + date.today().isoformat()).encode()).hexdigest(), 16) % (2 ** 32)
-    return random.Random(seed)
-
-
 class FbDailyLimits:
     def __init__(self, max_friend_requests: int = 15, max_likes: int = 40, max_stories: int = 30):
-        rng = _day_rng()
+        def rnd(max_val: int) -> int:
+            return random.randint(int(max_val * 0.55), max_val)
+
         self._limits = {
-            "friend_requests": rng.randint(int(max_friend_requests * 0.55), max_friend_requests),
-            "likes":           rng.randint(int(max_likes * 0.55),           max_likes),
-            "stories":         rng.randint(int(max_stories * 0.55),         max_stories),
+            "friend_requests": rnd(max_friend_requests),
+            "likes":           rnd(max_likes),
+            "stories":         rnd(max_stories),
         }
         logger.info(
             f"[FB] Limites du jour — "

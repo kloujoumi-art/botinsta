@@ -1,8 +1,7 @@
 import asyncio
-import hashlib
 import os
 import random
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional
 
 from core.browser import BrowserManager
@@ -18,11 +17,6 @@ from facebook.database import fb_init_db, fb_get_pending_targets, fb_log_action,
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-def _day_rng() -> random.Random:
-    seed = int(hashlib.md5(("fb" + date.today().isoformat()).encode()).hexdigest(), 16) % (2 ** 32)
-    return random.Random(seed)
 
 
 def _get_fb_settings():
@@ -56,13 +50,12 @@ class FbBotEngine:
         self._action_count = 0
         self._scrape_every = random.randint(10, 18)
         self._force_scrape = False
-        rng = _day_rng()
         self._delays = {
-            "min":            rng.uniform(self.cfg["min_delay"] * 0.8, self.cfg["min_delay"] * 1.4),
-            "max":            rng.uniform(self.cfg["max_delay"] * 0.8, self.cfg["max_delay"] * 1.4),
-            "long_prob":      rng.uniform(0.05, 0.15),
-            "long_min":       rng.uniform(120, 240),
-            "long_max":       rng.uniform(400, 700),
+            "min":       random.uniform(self.cfg["min_delay"] * 0.8, self.cfg["min_delay"] * 1.4),
+            "max":       random.uniform(self.cfg["max_delay"] * 0.8, self.cfg["max_delay"] * 1.4),
+            "long_prob": random.uniform(0.05, 0.15),
+            "long_min":  random.uniform(120, 240),
+            "long_max":  random.uniform(400, 700),
         }
 
     async def initialize(self) -> bool:
@@ -155,16 +148,15 @@ class FbBotEngine:
             await FbLoginManager(self.browser).login()
             return
 
-        rng = _day_rng()
-        pool = ["scroll_feed"] * rng.randint(4, 7)
+        pool = ["scroll_feed"] * random.randint(4, 7)
         if remaining["stories"] > 0:
-            pool += ["view_stories"] * rng.randint(1, 3)
+            pool += ["view_stories"] * random.randint(1, 3)
         if remaining["likes"] > 0:
-            pool += ["like_post"] * rng.randint(2, 4)
+            pool += ["like_post"] * random.randint(2, 4)
         if remaining["likes"] > 0 and self.cfg["target_pages"]:
-            pool += ["like_page"] * rng.randint(1, 2)
+            pool += ["like_page"] * random.randint(1, 2)
         if remaining["friend_requests"] > 0:
-            pool += ["friend_request"] * rng.randint(1, 2)
+            pool += ["friend_request"] * random.randint(1, 2)
 
         if not pool:
             await asyncio.sleep(300)

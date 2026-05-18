@@ -3,9 +3,8 @@ Moteur principal du bot : orchestre toutes les actions, gère les pauses,
 vérifie les limites et les anomalies à chaque cycle.
 """
 import asyncio
-import hashlib
 import random
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional
 
 from core.browser import BrowserManager
@@ -29,11 +28,6 @@ from config.settings import Settings, get_settings
 logger = get_logger(__name__)
 
 
-def _day_rng() -> random.Random:
-    seed = int(hashlib.md5(date.today().isoformat().encode()).hexdigest(), 16) % (2 ** 32)
-    return random.Random(seed)
-
-
 class BotEngine:
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
@@ -50,26 +44,12 @@ class BotEngine:
         self._force_scrape = False                   # déclenché depuis le dashboard
 
     def _compute_daily_delays(self) -> dict:
-        rng = _day_rng()
-        # Délais min/max varient chaque jour dans une plage raisonnable
-        min_delay = rng.uniform(
-            self.settings.min_action_delay * 0.8,
-            self.settings.min_action_delay * 1.4,
-        )
-        max_delay = rng.uniform(
-            self.settings.max_action_delay * 0.8,
-            self.settings.max_action_delay * 1.4,
-        )
-        # Probabilité de pause longue : entre 5 % et 15 %
-        long_pause_prob = rng.uniform(0.05, 0.15)
-        long_pause_min  = rng.uniform(90, 180)
-        long_pause_max  = rng.uniform(300, 600)
         return {
-            "min_delay":       min_delay,
-            "max_delay":       max_delay,
-            "long_pause_prob": long_pause_prob,
-            "long_pause_min":  long_pause_min,
-            "long_pause_max":  long_pause_max,
+            "min_delay":       random.uniform(self.settings.min_action_delay * 0.8, self.settings.min_action_delay * 1.4),
+            "max_delay":       random.uniform(self.settings.max_action_delay * 0.8, self.settings.max_action_delay * 1.4),
+            "long_pause_prob": random.uniform(0.05, 0.15),
+            "long_pause_min":  random.uniform(90, 180),
+            "long_pause_max":  random.uniform(300, 600),
         }
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
@@ -217,14 +197,13 @@ class BotEngine:
             await login_manager.login()
             return
 
-        # Construire le pool d'actions pondérées (poids varient chaque jour)
-        rng = _day_rng()
-        w_scroll  = rng.randint(4, 7)
-        w_visit   = rng.randint(2, 4)
-        w_stories = rng.randint(1, 3)
-        w_reel    = rng.randint(1, 3)
-        w_like    = rng.randint(1, 3)
-        w_follow  = rng.randint(1, 2)
+        # Construire le pool d'actions pondérées (poids aléatoires à chaque démarrage)
+        w_scroll  = random.randint(4, 7)
+        w_visit   = random.randint(2, 4)
+        w_stories = random.randint(1, 3)
+        w_reel    = random.randint(1, 3)
+        w_like    = random.randint(1, 3)
+        w_follow  = random.randint(1, 2)
 
         pool = []
         pool += ["scroll_feed"] * w_scroll
