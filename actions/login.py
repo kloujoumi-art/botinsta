@@ -17,6 +17,19 @@ logger = get_logger(__name__)
 
 INSTAGRAM_URL = "https://www.instagram.com"
 LOGIN_URL = f"{INSTAGRAM_URL}/accounts/login/"
+SCREENSHOT_DIR = "/data"
+
+
+async def _take_debug_screenshot(page, name: str) -> None:
+    """Sauvegarde un screenshot dans /data pour inspection via le dashboard."""
+    try:
+        import os
+        os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+        path = f"{SCREENSHOT_DIR}/debug_{name}.png"
+        await page.screenshot(path=path, full_page=False)
+        logger.info(f"Screenshot sauvegardé → {path}")
+    except Exception as e:
+        logger.debug(f"Screenshot impossible ({name}) : {e}")
 
 
 class LoginManager:
@@ -41,10 +54,7 @@ class LoginManager:
 
         logger.info("Tentative de restauration de session...")
         await self.browser.load_cookies(self.session_file)
-        try:
-            await page.goto(INSTAGRAM_URL, wait_until="networkidle", timeout=60000)
-        except Exception:
-            pass
+        await page.goto(INSTAGRAM_URL, wait_until="domcontentloaded", timeout=45000)
         await random_sleep(3, 6)
 
         if await self._is_logged_in(page):
@@ -58,16 +68,15 @@ class LoginManager:
     async def _do_login(self, page: Page) -> bool:
         logger.info("Connexion à Instagram...")
         try:
-            try:
-                await page.goto(LOGIN_URL, wait_until="networkidle", timeout=60000)
-            except Exception:
-                # networkidle peut timeout sur connexions lentes — continuer quand même
-                pass
-            await random_sleep(4, 7)
+            await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
+            await random_sleep(5, 8)   # laisser le JS d'Instagram se rendre
 
             current_url = page.url
             page_title = await page.title()
             logger.info(f"Page chargée — URL: {current_url} | Titre: {page_title}")
+
+            # Screenshot de debug sauvegardé sur /data pour inspection dans le dashboard
+            await _take_debug_screenshot(page, "login_page")
 
             await self._handle_cookie_banner(page)
 
@@ -97,6 +106,7 @@ class LoginManager:
                     f"Champ username introuvable. URL={current_url} "
                     f"| HTML début: {page_html[:600]}"
                 )
+                await _take_debug_screenshot(page, "login_failed_no_input")
                 log_error("login_no_input", f"Username input not found on {current_url}", "login")
                 return False
 
@@ -165,8 +175,10 @@ class LoginManager:
                 logger.info("Connexion réussie ✓")
                 log_action("login", status="success")
                 await self.browser.save_cookies(self.session_file)
+                await _take_debug_screenshot(page, "login_success")
                 return True
 
+            await _take_debug_screenshot(page, "login_failed_post_submit")
             logger.error("Échec de connexion — vérifiez vos identifiants dans .env")
             log_error("login_failed", "Connexion échouée après soumission du formulaire", "login")
             return False

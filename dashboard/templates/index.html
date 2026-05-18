@@ -95,13 +95,30 @@
       <span id="status-text">Chargement…</span>
     </div>
   </div>
-  <div class="d-flex gap-2">
+  <div class="d-flex gap-2 align-items-center">
+    <div class="status-badge" id="login-badge" title="Statut de connexion Instagram">
+      <i class="fas fa-lock" id="login-icon"></i>
+      <span id="login-text">…</span>
+    </div>
     <button class="btn btn-sm btn-warning btn-ctrl" id="btn-pause" onclick="pauseBot()">
       <i class="fas fa-pause me-1"></i>Pause
     </button>
     <button class="btn btn-sm btn-success btn-ctrl" id="btn-resume" onclick="resumeBot()" style="display:none">
       <i class="fas fa-play me-1"></i>Reprendre
     </button>
+    <button class="btn btn-sm btn-ctrl" style="background:#1c1c36;border:1px solid #252545;color:#a0a0c0" onclick="openScreenshot()">
+      <i class="fas fa-camera me-1"></i>Screenshot
+    </button>
+  </div>
+</div>
+
+<!-- Screenshot modal -->
+<div id="screenshot-overlay" onclick="this.style.display='none'"
+     style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:none;align-items:center;justify-content:center;cursor:zoom-out">
+  <div style="max-width:90vw;max-height:90vh;text-align:center">
+    <div id="screenshot-tabs" style="margin-bottom:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap"></div>
+    <img id="screenshot-img" src="" style="max-width:100%;max-height:80vh;border-radius:10px;border:2px solid #7c6aff" alt="Screenshot">
+    <div style="color:#a0a0c0;font-size:.8rem;margin-top:8px">Cliquez pour fermer</div>
   </div>
 </div>
 
@@ -246,6 +263,20 @@ async function fetchStats() {
   txt.textContent = { running: 'En cours', paused: 'En pause', stopped: 'Arrêté' }[status] || status;
   bp.style.display = status === 'running' ? '' : 'none';
   br.style.display = status === 'paused'  ? '' : 'none';
+
+  // Statut de connexion Instagram
+  const loginBadge = document.getElementById('login-badge');
+  const loginIcon  = document.getElementById('login-icon');
+  const loginText  = document.getElementById('login-text');
+  const ls = d.login_status || 'pending';
+  const loginColors = { success: '#22c55e', failed: '#ef4444', pending: '#f59e0b' };
+  const loginLabels = { success: 'Connecté', failed: 'Échec connexion', pending: 'En attente' };
+  const loginIcons  = { success: 'fa-unlock', failed: 'fa-lock', pending: 'fa-spinner fa-spin' };
+  loginBadge.style.borderColor = loginColors[ls] || '#6b6b8a';
+  loginIcon.className = `fas ${loginIcons[ls] || 'fa-lock'}`;
+  loginIcon.style.color = loginColors[ls] || '#6b6b8a';
+  loginText.textContent = loginLabels[ls] || ls;
+  loginText.style.color = loginColors[ls] || '#6b6b8a';
 }
 
 async function fetchActions() {
@@ -316,6 +347,32 @@ async function addTarget() {
     msg.style.color = '#ef4444';
   }
   setTimeout(() => { msg.textContent = ''; }, 3000);
+}
+
+async function openScreenshot() {
+  const overlay = document.getElementById('screenshot-overlay');
+  const img     = document.getElementById('screenshot-img');
+  const tabs    = document.getElementById('screenshot-tabs');
+  overlay.style.display = 'flex';
+
+  // Charger la liste des screenshots disponibles
+  const res = await fetch('/api/screenshots').catch(() => null);
+  const names = res ? await res.json() : ['login_page'];
+
+  tabs.innerHTML = names.map(n =>
+    `<button onclick="loadScreenshot('${n}',this)"
+      style="background:#1c1c36;border:1px solid #252545;color:#a0a0c0;border-radius:8px;padding:4px 12px;font-size:.8rem;cursor:pointer"
+    >${n}</button>`
+  ).join('');
+
+  // Charger le premier par défaut
+  if (names.length) loadScreenshot(names[names.length - 1], tabs.lastChild);
+}
+
+function loadScreenshot(name, btn) {
+  document.getElementById('screenshot-img').src = `/api/screenshot?name=${name}&t=${Date.now()}`;
+  document.querySelectorAll('#screenshot-tabs button').forEach(b => b.style.borderColor = '#252545');
+  if (btn) btn.style.borderColor = '#7c6aff';
 }
 
 function refresh() { fetchStats(); fetchActions(); fetchErrors(); fetchTargets(); }

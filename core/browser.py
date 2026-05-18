@@ -22,11 +22,10 @@ USER_AGENTS = [
 ]
 
 VIEWPORTS = [
-    {"width": 1920, "height": 1080},
     {"width": 1366, "height": 768},
-    {"width": 1440, "height": 900},
     {"width": 1280, "height": 800},
-    {"width": 1600, "height": 900},
+    {"width": 1280, "height": 720},
+    {"width": 1360, "height": 768},
 ]
 
 LAUNCH_ARGS = [
@@ -39,7 +38,7 @@ LAUNCH_ARGS = [
     "--no-zygote",
     "--disable-gpu",
     "--lang=fr-FR",
-    "--disable-features=IsolateOrigins,site-per-process",
+    "--disable-features=IsolateOrigins,site-per-process,VizDisplayCompositor",
     "--disable-ipc-flooding-protection",
     "--disable-background-networking",
     "--disable-client-side-phishing-detection",
@@ -55,6 +54,14 @@ LAUNCH_ARGS = [
     "--safebrowsing-disable-auto-update",
     "--password-store=basic",
     "--use-mock-keychain",
+    # Réduction mémoire pour Render (512 MB RAM)
+    "--renderer-process-limit=1",
+    "--disable-renderer-backgrounding",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--js-flags=--max-old-space-size=192",
+    "--disable-audio-output",
+    "--mute-audio",
 ]
 
 

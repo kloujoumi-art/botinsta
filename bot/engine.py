@@ -35,6 +35,7 @@ class BotEngine:
         self.browser = BrowserManager()
         self.running = False
         self.paused = False
+        self.login_status = "pending"   # pending / success / failed
         self._consecutive_errors = 0
         self._MAX_CONSECUTIVE_ERRORS = 5
 
@@ -46,10 +47,12 @@ class BotEngine:
 
         login_manager = LoginManager(self.browser)
         if not await login_manager.login():
+            self.login_status = "failed"
             logger.error("Impossible de se connecter à Instagram. Vérifiez vos identifiants dans .env")
             await self.browser.close()
             return False
 
+        self.login_status = "success"
         logger.info("Bot initialisé avec succès ✓")
         return True
 

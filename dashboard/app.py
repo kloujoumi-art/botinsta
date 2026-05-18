@@ -2,7 +2,8 @@
 Dashboard Flask : visualisation des statistiques en temps réel.
 Accessible sur http://127.0.0.1:5000 pendant l'exécution du bot.
 """
-from flask import Flask, render_template, jsonify, request
+import os
+from flask import Flask, render_template, jsonify, request, send_file
 from flask_cors import CORS
 
 from storage.database import (
@@ -56,12 +57,13 @@ def api_stats():
         "reels":          settings.max_reels_per_day,
     }
     return jsonify({
-        "today":       today,
-        "remaining":   remaining,
-        "limits":      limits,
-        "bot_running": _bot_engine.running if _bot_engine else False,
-        "bot_paused":  _bot_engine.paused  if _bot_engine else False,
-        "bot_status":  _bot_engine.status  if _bot_engine else "stopped",
+        "today":        today,
+        "remaining":    remaining,
+        "limits":       limits,
+        "bot_running":  _bot_engine.running       if _bot_engine else False,
+        "bot_paused":   _bot_engine.paused        if _bot_engine else False,
+        "bot_status":   _bot_engine.status        if _bot_engine else "stopped",
+        "login_status": _bot_engine.login_status  if _bot_engine else "pending",
     })
 
 
@@ -91,6 +93,30 @@ def api_weekly():
 def health():
     """Health check endpoint pour Render."""
     return jsonify({"status": "ok", "bot": _bot_engine.status if _bot_engine else "stopped"})
+
+
+@app.route("/api/screenshot")
+def api_screenshot():
+    """Sert le dernier screenshot de debug sauvegardé par le bot."""
+    name = request.args.get("name", "login_page")
+    path = f"/data/debug_{name}.png"
+    if os.path.exists(path):
+        return send_file(path, mimetype="image/png")
+    return jsonify({"error": f"Screenshot '{name}' introuvable"}), 404
+
+
+@app.route("/api/screenshots")
+def api_screenshots():
+    """Liste tous les screenshots disponibles dans /data."""
+    try:
+        files = [
+            f.replace("debug_", "").replace(".png", "")
+            for f in os.listdir("/data")
+            if f.startswith("debug_") and f.endswith(".png")
+        ]
+        return jsonify(sorted(files))
+    except Exception:
+        return jsonify([])
 
 
 @app.route("/api/bot/pause", methods=["POST"])
