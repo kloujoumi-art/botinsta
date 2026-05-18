@@ -61,6 +61,12 @@ services:
         sync: false
       - key: FACEBOOK_XS
         sync: false
+      - key: FACEBOOK_DATR
+        sync: false
+      - key: FACEBOOK_SB
+        sync: false
+      - key: FACEBOOK_FR
+        sync: false
       - key: FACEBOOK_EMAIL
         sync: false
       - key: FACEBOOK_PASSWORD

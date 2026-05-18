@@ -4,6 +4,7 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 FB_URL = "https://www.facebook.com"
+DATA_DIR = os.getenv("DATA_DIR", "./data")
 
 
 class FbLoginManager:
@@ -30,21 +31,25 @@ class FbLoginManager:
     async def _cookie_login(self, c_user: str, xs: str) -> bool:
         logger.info("Connexion Facebook via cookies...")
         try:
-            await self.browser.context.add_cookies([
+            cookies = [
                 {"name": "c_user", "value": c_user, "domain": ".facebook.com", "path": "/", "secure": True},
                 {"name": "xs",     "value": xs,     "domain": ".facebook.com", "path": "/", "secure": True},
-            ])
+            ]
+            # Cookies optionnels supplémentaires pour contourner la détection IP cloud
+            for name, env in [("datr", "FACEBOOK_DATR"), ("sb", "FACEBOOK_SB"), ("fr", "FACEBOOK_FR")]:
+                val = os.getenv(env, "").strip()
+                if val:
+                    cookies.append({"name": name, "value": val, "domain": ".facebook.com", "path": "/", "secure": True})
+
+            await self.browser.context.add_cookies(cookies)
             await self.browser.page.goto(FB_URL, wait_until="domcontentloaded", timeout=30000)
             await random_sleep(3, 5)
             if await self._is_logged_in():
                 logger.info("Connexion Facebook via cookies réussie ✓")
                 return True
             url = self.browser.page.url
-            logger.warning(f"Cookies Facebook invalides — URL: {url}")
-            try:
-                await self.browser.page.screenshot(path="./data/debug_fb_login.png")
-            except Exception:
-                pass
+            logger.warning(f"Cookies Facebook invalides — URL actuelle: {url}")
+            await self._save_screenshot("fb_login")
             return False
         except Exception as e:
             logger.error(f"Erreur cookie login Facebook : {e}")
@@ -61,22 +66,33 @@ class FbLoginManager:
             await page.fill('input[name="pass"]', password)
             await random_sleep(0.5, 1.0)
             await page.click('button[name="login"]')
-            await random_sleep(4, 7)
+            await random_sleep(5, 8)
             if await self._is_logged_in():
                 logger.info("Connexion Facebook formulaire réussie ✓")
                 return True
-            logger.error("Connexion Facebook échouée — vérifiez les identifiants ou le 2FA")
+            url = self.browser.page.url
+            logger.error(f"Connexion Facebook échouée — URL: {url}")
+            await self._save_screenshot("fb_login")
             return False
         except Exception as e:
             logger.error(f"Erreur form login Facebook : {e}")
             return False
+
+    async def _save_screenshot(self, name: str) -> None:
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            path = os.path.join(DATA_DIR, f"debug_{name}.png")
+            await self.browser.page.screenshot(path=path)
+            logger.info(f"Screenshot sauvegardé : {path}")
+        except Exception as e:
+            logger.warning(f"Screenshot échoué : {e}")
 
     async def _is_logged_in(self) -> bool:
         try:
             url = self.browser.page.url
             content = await self.browser.page.content()
             bad_urls = ("login", "checkpoint", "recover", "two_step", "two-step", "security")
-            if not "facebook.com" in url:
+            if "facebook.com" not in url:
                 return False
             if any(b in url for b in bad_urls):
                 return False
