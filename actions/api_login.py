@@ -1,14 +1,35 @@
 """
-Connexion Instagram via l'API privée (instagrapi).
+Connexion Instagram.
 
-Contourne le formulaire web non-rendu par Chrome Headless Shell sur IP cloud.
-Retourne des cookies Playwright que l'on injecte dans le contexte du navigateur.
+Ordre de priorité :
+  1. Cookie sessionid depuis la variable d'env INSTAGRAM_SESSIONID  ← le plus fiable
+  2. API privée Instagram via instagrapi (peut être bloquée sur IPs cloud)
 """
 import asyncio
+import os
 from pathlib import Path
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _session_from_env() -> list[dict] | None:
+    """Retourne des cookies Playwright depuis INSTAGRAM_SESSIONID si défini."""
+    session_id = os.getenv("INSTAGRAM_SESSIONID", "").strip()
+    if not session_id:
+        return None
+    logger.info("Utilisation de INSTAGRAM_SESSIONID depuis les variables d'environnement")
+    return [
+        {
+            "name": "sessionid",
+            "value": session_id,
+            "domain": ".instagram.com",
+            "path": "/",
+            "secure": True,
+            "httpOnly": True,
+            "sameSite": "Lax",
+        }
+    ]
 
 
 def _do_api_login(username: str, password: str, session_file: str) -> list[dict]:
@@ -73,5 +94,12 @@ def _do_api_login(username: str, password: str, session_file: str) -> list[dict]
 
 
 async def api_login_cookies(username: str, password: str, session_file: str) -> list[dict]:
-    """Version async — délègue la partie sync à un thread pour ne pas bloquer l'event loop."""
+    """Retourne des cookies Playwright pour s'authentifier sur Instagram."""
+    # Priorité 1 : sessionid depuis variable d'environnement (contourne blocage IP)
+    cookies = _session_from_env()
+    if cookies:
+        return cookies
+
+    # Priorité 2 : instagrapi (API privée)
+    logger.info("INSTAGRAM_SESSIONID non défini — tentative via instagrapi...")
     return await asyncio.to_thread(_do_api_login, username, password, session_file)
