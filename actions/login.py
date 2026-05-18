@@ -41,7 +41,10 @@ class LoginManager:
 
         logger.info("Tentative de restauration de session...")
         await self.browser.load_cookies(self.session_file)
-        await page.goto(INSTAGRAM_URL, wait_until="domcontentloaded", timeout=30000)
+        try:
+            await page.goto(INSTAGRAM_URL, wait_until="networkidle", timeout=60000)
+        except Exception:
+            pass
         await random_sleep(3, 6)
 
         if await self._is_logged_in(page):
@@ -55,13 +58,48 @@ class LoginManager:
     async def _do_login(self, page: Page) -> bool:
         logger.info("Connexion à Instagram...")
         try:
-            await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
-            await random_sleep(3, 6)
+            try:
+                await page.goto(LOGIN_URL, wait_until="networkidle", timeout=60000)
+            except Exception:
+                # networkidle peut timeout sur connexions lentes — continuer quand même
+                pass
+            await random_sleep(4, 7)
+
+            current_url = page.url
+            page_title = await page.title()
+            logger.info(f"Page chargée — URL: {current_url} | Titre: {page_title}")
 
             await self._handle_cookie_banner(page)
 
-            # Username
-            username_input = await page.wait_for_selector('input[name="username"]', timeout=15000)
+            # Chercher le champ username avec plusieurs sélecteurs de secours
+            username_input = None
+            username_selectors = [
+                'input[name="username"]',
+                'input[aria-label="Phone number, username, or email"]',
+                'input[aria-label="Numéro de téléphone, nom d\'utilisateur ou adresse e-mail"]',
+                'input[autocomplete="username"]',
+                'input[type="text"]',
+            ]
+
+            for sel in username_selectors:
+                try:
+                    el = await page.wait_for_selector(sel, timeout=12000)
+                    if el:
+                        logger.info(f"Champ username trouvé : {sel}")
+                        username_input = el
+                        break
+                except Exception:
+                    continue
+
+            if not username_input:
+                page_html = await page.content()
+                logger.error(
+                    f"Champ username introuvable. URL={current_url} "
+                    f"| HTML début: {page_html[:600]}"
+                )
+                log_error("login_no_input", f"Username input not found on {current_url}", "login")
+                return False
+
             await username_input.click()
             await micro_pause()
             await type_like_human(username_input, self.settings.instagram_username)
@@ -69,7 +107,27 @@ class LoginManager:
             await random_sleep(0.8, 2.0)
 
             # Password
-            password_input = await page.wait_for_selector('input[name="password"]', timeout=5000)
+            password_input = None
+            password_selectors = [
+                'input[name="password"]',
+                'input[type="password"]',
+                'input[aria-label="Password"]',
+                'input[aria-label="Mot de passe"]',
+            ]
+            for sel in password_selectors:
+                try:
+                    el = await page.wait_for_selector(sel, timeout=8000)
+                    if el:
+                        password_input = el
+                        break
+                except Exception:
+                    continue
+
+            if not password_input:
+                logger.error("Champ password introuvable")
+                log_error("login_no_password", "Password input not found", "login")
+                return False
+
             await password_input.click()
             await micro_pause()
             await type_like_human(password_input, self.settings.instagram_password)
@@ -77,10 +135,30 @@ class LoginManager:
             await random_sleep(1.0, 2.5)
 
             # Soumettre
-            submit_btn = await page.wait_for_selector('button[type="submit"]', timeout=5000)
+            submit_btn = None
+            submit_selectors = [
+                'button[type="submit"]',
+                'button:has-text("Log in")',
+                'button:has-text("Connexion")',
+                'button:has-text("Se connecter")',
+            ]
+            for sel in submit_selectors:
+                try:
+                    el = await page.wait_for_selector(sel, timeout=5000)
+                    if el:
+                        submit_btn = el
+                        break
+                except Exception:
+                    continue
+
+            if not submit_btn:
+                logger.error("Bouton submit introuvable")
+                log_error("login_no_submit", "Submit button not found", "login")
+                return False
+
             await submit_btn.click()
 
-            await random_sleep(5, 9)
+            await random_sleep(6, 10)
             await self._handle_post_login_prompts(page)
 
             if await self._is_logged_in(page):
