@@ -183,6 +183,15 @@ def is_already_targeted(username: str) -> bool:
         return row is not None
 
 
+def get_followed_targets(limit: int = 200) -> List[Dict]:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT username, processed_at FROM targets WHERE status = 'followed' ORDER BY processed_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def get_targets_summary() -> Dict[str, int]:
     with get_db() as conn:
         row = conn.execute(

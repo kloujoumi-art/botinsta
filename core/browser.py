@@ -127,6 +127,10 @@ class BrowserManager:
     def page(self) -> Optional[Page]:
         return self._page
 
+    @property
+    def context(self) -> Optional[BrowserContext]:
+        return self._context
+
     async def save_cookies(self, filepath: str) -> None:
         if self._context:
             cookies = await self._context.cookies()

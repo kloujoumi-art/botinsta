@@ -14,6 +14,7 @@ from storage.database import log_action, log_error, update_target_status
 logger = get_logger(__name__)
 
 INSTAGRAM_URL = "https://www.instagram.com"
+PRIVATE_TEXTS = ["Ce compte est privé", "This Account is Private", "This account is private"]
 
 
 class ProfileAction:
@@ -45,6 +46,12 @@ class ProfileAction:
                 update_target_status(username, "not_found")
                 return False
 
+            # Ignorer les comptes privés
+            if await self._is_private():
+                logger.debug(f"Compte privé ignoré : @{username}")
+                update_target_status(username, "skipped")
+                return False
+
             # Lire la bio (comportement humain)
             await random_sleep(2, 5)
 
@@ -72,6 +79,13 @@ class ProfileAction:
         try:
             content = await self.page.content()
             return "Page introuvable" in content or "Sorry, this page" in content or "Page Not Found" in content
+        except Exception:
+            return False
+
+    async def _is_private(self) -> bool:
+        try:
+            content = await self.page.content()
+            return any(t in content for t in PRIVATE_TEXTS)
         except Exception:
             return False
 

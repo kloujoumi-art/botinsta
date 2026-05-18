@@ -3,8 +3,9 @@ Moteur principal du bot : orchestre toutes les actions, gère les pauses,
 vérifie les limites et les anomalies à chaque cycle.
 """
 import asyncio
+import hashlib
 import random
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from core.browser import BrowserManager
@@ -28,6 +29,11 @@ from config.settings import Settings, get_settings
 logger = get_logger(__name__)
 
 
+def _day_rng() -> random.Random:
+    seed = int(hashlib.md5(date.today().isoformat().encode()).hexdigest(), 16) % (2 ** 32)
+    return random.Random(seed)
+
+
 class BotEngine:
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
@@ -38,6 +44,33 @@ class BotEngine:
         self.login_status = "pending"   # pending / success / failed
         self._consecutive_errors = 0
         self._MAX_CONSECUTIVE_ERRORS = 5
+        self._daily_delays = self._compute_daily_delays()
+        self._action_count = 0
+        self._scrape_every = random.randint(12, 20)  # scrape forcé toutes les N actions
+        self._force_scrape = False                   # déclenché depuis le dashboard
+
+    def _compute_daily_delays(self) -> dict:
+        rng = _day_rng()
+        # Délais min/max varient chaque jour dans une plage raisonnable
+        min_delay = rng.uniform(
+            self.settings.min_action_delay * 0.8,
+            self.settings.min_action_delay * 1.4,
+        )
+        max_delay = rng.uniform(
+            self.settings.max_action_delay * 0.8,
+            self.settings.max_action_delay * 1.4,
+        )
+        # Probabilité de pause longue : entre 5 % et 15 %
+        long_pause_prob = rng.uniform(0.05, 0.15)
+        long_pause_min  = rng.uniform(90, 180)
+        long_pause_max  = rng.uniform(300, 600)
+        return {
+            "min_delay":       min_delay,
+            "max_delay":       max_delay,
+            "long_pause_prob": long_pause_prob,
+            "long_pause_min":  long_pause_min,
+            "long_pause_max":  long_pause_max,
+        }
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -54,6 +87,12 @@ class BotEngine:
 
         self.login_status = "success"
         logger.info("Bot initialisé avec succès ✓")
+
+        # Scrape initial pour remplir la file de cibles dès le démarrage
+        if self.settings.target_accounts:
+            logger.info("Scrape initial des cibles au démarrage...")
+            await self._scrape_new_targets()
+
         return True
 
     async def run(self) -> None:
@@ -104,6 +143,20 @@ class BotEngine:
                     self._consecutive_errors = 0
                     continue
 
+                # Scrape forcé depuis le dashboard
+                if self._force_scrape:
+                    self._force_scrape = False
+                    logger.info("Scrape forcé depuis le dashboard...")
+                    await self._scrape_new_targets()
+
+                # Scrape périodique toutes les N actions
+                self._action_count += 1
+                if self._action_count >= self._scrape_every and self.settings.target_accounts:
+                    self._action_count = 0
+                    self._scrape_every = random.randint(12, 20)
+                    logger.info("Scrape périodique des cibles...")
+                    await self._scrape_new_targets()
+
                 # Exécuter une action
                 try:
                     await self._execute_random_action()
@@ -114,16 +167,19 @@ class BotEngine:
                     log_error("action_error", str(e))
                     await asyncio.sleep(random.uniform(30, 90))
 
-                # Délai entre actions
+                # Délai entre actions (valeurs du jour)
                 delay = random.uniform(
-                    self.settings.min_action_delay,
-                    self.settings.max_action_delay,
+                    self._daily_delays["min_delay"],
+                    self._daily_delays["max_delay"],
                 )
                 await asyncio.sleep(delay)
 
-                # Pause longue aléatoire (simuler distraction)
-                if random.random() < 0.08:
-                    pause = random.uniform(120, 480)
+                # Pause longue aléatoire (probabilité et durée varient chaque jour)
+                if random.random() < self._daily_delays["long_pause_prob"]:
+                    pause = random.uniform(
+                        self._daily_delays["long_pause_min"],
+                        self._daily_delays["long_pause_max"],
+                    )
                     logger.info(f"Pause naturelle de {pause:.0f}s...")
                     await asyncio.sleep(pause)
 
@@ -159,19 +215,27 @@ class BotEngine:
             await login_manager.login()
             return
 
-        # Construire le pool d'actions pondérées
+        # Construire le pool d'actions pondérées (poids varient chaque jour)
+        rng = _day_rng()
+        w_scroll  = rng.randint(4, 7)
+        w_visit   = rng.randint(2, 4)
+        w_stories = rng.randint(1, 3)
+        w_reel    = rng.randint(1, 3)
+        w_like    = rng.randint(1, 3)
+        w_follow  = rng.randint(1, 2)
+
         pool = []
-        pool += ["scroll_feed"] * 5          # Action la plus fréquente
+        pool += ["scroll_feed"] * w_scroll
         if remaining["profile_visits"] > 0:
-            pool += ["visit_profile"] * 3
+            pool += ["visit_profile"] * w_visit
         if remaining["stories"] > 0:
-            pool += ["view_stories"] * 2
+            pool += ["view_stories"] * w_stories
         if remaining["reels"] > 0:
-            pool += ["view_reel"] * 2
+            pool += ["view_reel"] * w_reel
         if remaining["likes"] > 0:
-            pool += ["like_post"] * 2
+            pool += ["like_post"] * w_like
         if remaining["follows"] > 0:
-            pool += ["follow_user"] * 1      # Action la moins fréquente
+            pool += ["follow_user"] * w_follow
 
         if not pool:
             await asyncio.sleep(300)
@@ -222,7 +286,7 @@ class BotEngine:
 
         account = random.choice(self.settings.target_accounts)
         scraper = TargetScraper(self.browser.page)
-        raw = await scraper.scrape_followers(account, limit=60)
+        raw = await scraper.scrape_followers(account, limit=self.settings.max_targets_per_scrape)
         filtered = filter_targets(deduplicate(raw))
         logger.info(f"Scraping terminé : {len(filtered)} cibles après filtrage")
 

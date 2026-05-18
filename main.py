@@ -2,19 +2,9 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-"""
-Point d'entrée principal de BotInsta.
-
-Utilisation :
-  python main.py                     → Bot + Dashboard
-  python main.py --mode bot          → Bot uniquement
-  python main.py --mode dashboard    → Dashboard uniquement
-  python main.py --headless          → Mode sans fenêtre de navigateur
-"""
 import asyncio
 import argparse
 import threading
-import sys
 
 from config.settings import get_settings
 from utils.logger import get_logger
@@ -22,85 +12,60 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def _start_dashboard(engine=None):
-    from dashboard.app import run_dashboard, set_bot_engine
-    if engine:
-        set_bot_engine(engine)
+def _start_dashboard(insta_engine=None, fb_engine=None):
+    from dashboard.app import run_dashboard, set_bot_engine, set_fb_engine
+    if insta_engine:
+        set_bot_engine(insta_engine)
+    if fb_engine:
+        set_fb_engine(fb_engine)
     run_dashboard()
 
 
-async def run_bot_only(settings):
+async def run_all(settings, enable_fb: bool):
     from bot.engine import BotEngine
-    engine = BotEngine(settings)
-    await engine.run()
+    from dashboard.app import set_bot_engine, set_fb_engine
 
+    insta_engine = BotEngine(settings)
+    set_bot_engine(insta_engine)
 
-async def run_both(settings):
-    from bot.engine import BotEngine
-    from dashboard.app import set_bot_engine
+    fb_engine = None
+    if enable_fb:
+        from facebook.engine import FbBotEngine
+        fb_engine = FbBotEngine()
+        set_fb_engine(fb_engine)
 
-    engine = BotEngine(settings)
-    set_bot_engine(engine)
-
-    # Dashboard dans un thread daemon (s'arrête quand le bot s'arrête)
-    t = threading.Thread(target=_start_dashboard, daemon=True)
+    t = threading.Thread(target=_start_dashboard, args=(insta_engine, fb_engine), daemon=True)
     t.start()
 
-    await engine.run()
+    tasks = [asyncio.create_task(insta_engine.run())]
+    if fb_engine:
+        tasks.append(asyncio.create_task(fb_engine.run()))
+
+    await asyncio.gather(*tasks)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="BotInsta — Bot Instagram intelligent et sécurisé",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Exemples :
-  python main.py                     # Bot + Dashboard (http://127.0.0.1:5000)
-  python main.py --mode bot          # Bot uniquement (pas de dashboard)
-  python main.py --mode dashboard    # Dashboard uniquement (pas de bot)
-  python main.py --headless          # Navigateur sans interface graphique
-        """,
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["bot", "dashboard", "both"],
-        default="both",
-        help="Mode de démarrage (défaut: both)",
-    )
-    parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Lancer le navigateur en mode headless (sans fenêtre)",
-    )
+    parser = argparse.ArgumentParser(description="BotInsta + BotFacebook")
+    parser.add_argument("--no-facebook", action="store_true", help="Désactiver le bot Facebook")
+    parser.add_argument("--headless", action="store_true")
     args = parser.parse_args()
 
     settings = get_settings()
-
     if args.headless:
         settings.headless = True
 
-    # Validation des identifiants
-    if args.mode != "dashboard":
-        if not settings.instagram_username or not settings.instagram_password:
-            print("\n[ERREUR] Configurez INSTAGRAM_USERNAME et INSTAGRAM_PASSWORD dans le fichier .env\n")
-            print("Copiez .env.example → .env et remplissez vos identifiants.")
-            sys.exit(1)
+    if not settings.instagram_username or not settings.instagram_password:
+        print("\n[ERREUR] Configurez INSTAGRAM_USERNAME et INSTAGRAM_PASSWORD dans .env\n")
+        sys.exit(1)
 
-    if not settings.target_accounts and args.mode != "dashboard":
-        print("\n[AVERTISSEMENT] TARGET_ACCOUNTS n'est pas configuré dans .env")
-        print("Le bot pourra fonctionner mais ne pourra pas cibler de nouveaux utilisateurs.\n")
+    # Activer Facebook si les cookies ou identifiants sont présents
+    has_fb = bool(
+        os.getenv("FACEBOOK_C_USER") or os.getenv("FACEBOOK_EMAIL")
+    )
+    enable_fb = has_fb and not args.no_facebook
 
-    logger.info(f"BotInsta démarré — mode={args.mode} | headless={settings.headless}")
-    logger.info(f"Compte : @{settings.instagram_username}")
-    if settings.target_accounts:
-        logger.info(f"Comptes cibles : {', '.join(settings.target_accounts)}")
-
-    if args.mode == "dashboard":
-        _start_dashboard()
-    elif args.mode == "bot":
-        asyncio.run(run_bot_only(settings))
-    else:
-        asyncio.run(run_both(settings))
+    logger.info(f"BotInsta démarré — Instagram ✓ | Facebook {'✓' if enable_fb else '✗ (non configuré)'}")
+    asyncio.run(run_all(settings, enable_fb))
 
 
 if __name__ == "__main__":

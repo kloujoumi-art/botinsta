@@ -20,6 +20,9 @@ class Settings:
     headless: bool = False
     proxy_url: Optional[str] = None
 
+    # Scraping
+    max_targets_per_scrape: int = 500
+
     # Daily limits (conservative defaults)
     max_follows_per_day: int = 25
     max_likes_per_day: int = 40
@@ -60,6 +63,7 @@ def get_settings() -> Settings:
         target_accounts=targets,
         headless=_parse_bool(os.getenv("HEADLESS", "false")),
         proxy_url=os.getenv("PROXY_URL") or None,
+        max_targets_per_scrape=int(os.getenv("MAX_TARGETS_PER_SCRAPE", "500")),
         max_follows_per_day=int(os.getenv("MAX_FOLLOWS_PER_DAY", "25")),
         max_likes_per_day=int(os.getenv("MAX_LIKES_PER_DAY", "40")),
         max_profile_visits_per_day=int(os.getenv("MAX_PROFILE_VISITS_PER_DAY", "80")),

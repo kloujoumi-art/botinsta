@@ -23,6 +23,7 @@ FOLLOW_BUTTON_SELECTORS = [
 ]
 
 ALREADY_FOLLOWING_TEXTS = ["Vous suivez", "Following", "Abonné(e)"]
+PRIVATE_TEXTS = ["Ce compte est privé", "This Account is Private", "This account is private"]
 
 
 class FollowAction:
@@ -51,6 +52,12 @@ class FollowAction:
                 logger.warning(f"Anomalie détectée, follow annulé pour @{username}")
                 return False
 
+            # Ignorer les comptes privés
+            if await self._is_private():
+                logger.debug(f"Compte privé ignoré : @{username}")
+                update_target_status(username, "skipped")
+                return False
+
             # Vérifier si déjà suivi
             if await self._is_already_following():
                 logger.debug(f"Déjà suivi : @{username}")
@@ -76,6 +83,13 @@ class FollowAction:
             logger.warning(f"Erreur follow @{username} : {e}")
             log_error("follow_error", str(e), "follow")
             log_action("follow", target=username, status="error", details=str(e))
+            return False
+
+    async def _is_private(self) -> bool:
+        try:
+            content = await self.page.content()
+            return any(t in content for t in PRIVATE_TEXTS)
+        except Exception:
             return False
 
     async def _is_already_following(self) -> bool:

@@ -46,7 +46,7 @@ class TargetScraper:
             added = add_targets_bulk(new_targets, source=f"followers:{account}")
             logger.info(f"✓ {added} nouveaux abonnés de @{account} ajoutés comme cibles")
         else:
-            logger.info("Tous les abonnés de @{account} sont déjà en base")
+            logger.info(f"Tous les abonnés de @{account} sont déjà en base")
 
         log_action("scrape_followers", target=account, status="success",
                    details=f"{len(new_targets)} ajoutés")
@@ -67,9 +67,12 @@ class TargetScraper:
                 cl.login_by_sessionid(session_id)
                 user_id = cl.user_id_from_username(account)
                 followers = cl.user_followers(user_id, amount=limit)
-                return [u.username for u in followers.values()]
+                result = [u.username for u in followers.values()]
+                logger.info(f"API scrape @{account} : {len(result)} followers récupérés")
+                return result
             except Exception as e:
-                logger.warning(f"API scrape échoué pour @{account} : {e}")
+                error_name = type(e).__name__
+                logger.warning(f"API scrape échoué pour @{account} [{error_name}] : {e}")
                 return []
 
         try:
@@ -140,40 +143,43 @@ class TargetScraper:
     async def _scrape_modal_usernames(self, limit: int) -> List[str]:
         usernames: set = set()
         scroll_attempts = 0
-        max_attempts = limit // 5 + 15
+        max_attempts = limit // 5 + 20
         stall_count = 0
 
         await random_sleep(2, 3)
+
+        # Trouver le conteneur scrollable une fois
+        scroll_container = await self._find_modal_scroll_container()
 
         while len(usernames) < limit and scroll_attempts < max_attempts:
             prev_count = len(usernames)
 
             try:
-                # Sélecteurs larges pour la modale des abonnés
                 links = await self.page.query_selector_all(
-                    'div[role="dialog"] a[href^="/"], '
-                    'div[role="dialog"] a[role="link"], '
-                    '[class*="follower"] a[href^="/"]'
+                    'div[role="dialog"] a[href^="/"],'
+                    'div[role="dialog"] a[role="link"][href^="/"],'
+                    '[aria-label*="ollower"] a[href^="/"],'
+                    '[aria-label*="bonnés"] a[href^="/"]'
                 )
                 for link in links:
                     try:
                         href = await link.get_attribute("href")
-                        if href and href.startswith("/") and href.count("/") == 2 and href.endswith("/"):
-                            username = href.strip("/")
-                            if username and len(username) >= 2:
-                                usernames.add(username)
-                        elif href and href.startswith("/") and "/" not in href[1:]:
-                            username = href.strip("/")
-                            if username and len(username) >= 2:
-                                usernames.add(username)
+                        if not href or not href.startswith("/"):
+                            continue
+                        parts = href.strip("/").split("/")
+                        # Garder seulement les hrefs qui ressemblent à /{username}/ ou /{username}
+                        if len(parts) == 1 and parts[0] and len(parts[0]) >= 2:
+                            usernames.add(parts[0])
                     except Exception:
                         pass
             except Exception:
                 pass
 
+            logger.debug(f"Modale : {len(usernames)} usernames après tentative {scroll_attempts + 1}")
+
             if len(usernames) == prev_count:
                 stall_count += 1
-                if stall_count >= 4:
+                if stall_count >= 6:
                     break
             else:
                 stall_count = 0
@@ -181,15 +187,18 @@ class TargetScraper:
             if len(usernames) >= limit:
                 break
 
-            # Défiler dans la modale
+            # Défiler dans le conteneur scrollable de la modale (syntaxe Playwright correcte)
             try:
-                modal = await self.page.query_selector('div[role="dialog"]')
-                if modal:
-                    await self.page.evaluate("arguments[0].scrollBy(0, 500)", modal)
+                if scroll_container:
+                    await scroll_container.evaluate("(el) => el.scrollBy(0, 600)")
                 else:
-                    await self.page.evaluate("window.scrollBy(0, 500)")
+                    modal = await self.page.query_selector('div[role="dialog"]')
+                    if modal:
+                        await modal.evaluate("(el) => el.scrollBy(0, 600)")
+                    else:
+                        await self.page.evaluate("window.scrollBy(0, 600)")
             except Exception:
-                await self.page.evaluate("window.scrollBy(0, 500)")
+                await self.page.evaluate("window.scrollBy(0, 600)")
 
             await random_sleep(1.5, 3.0)
             scroll_attempts += 1
@@ -197,6 +206,24 @@ class TargetScraper:
         collected = list(usernames)[:limit]
         logger.debug(f"UI collecté {len(collected)} usernames")
         return collected
+
+    async def _find_modal_scroll_container(self):
+        """Trouve l'élément scrollable à l'intérieur de la modale des abonnés."""
+        selectors = [
+            'div[role="dialog"] div[style*="overflow-y: auto"]',
+            'div[role="dialog"] div[style*="overflow-y:auto"]',
+            'div[role="dialog"] div[style*="overflow: auto"]',
+            'div[role="dialog"] ul',
+            'div[role="dialog"] div[class*="PZuss"]',
+        ]
+        for sel in selectors:
+            try:
+                el = await self.page.query_selector(sel)
+                if el:
+                    return el
+            except Exception:
+                continue
+        return None
 
     # ── Scraping des likers d'un post ──────────────────────────────────────
 
