@@ -163,7 +163,7 @@ class FbBotEngine:
             return
 
         action = random.choice(pool)
-        logger.info(f"[FB] Action : [{action}] | Restants : {remaining}")
+        logger.info(f"[FB] Action : {action} | Restants : {remaining}")
 
         if action == "scroll_feed":
             await FbFeedAction(page).scroll()

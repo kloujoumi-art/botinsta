@@ -223,7 +223,7 @@ class BotEngine:
             return
 
         action = random.choice(pool)
-        logger.info(f"Action choisie : [{action}] | Restants : {remaining}")
+        logger.info(f"Action choisie : {action} | Restants : {remaining}")
 
         if action == "scroll_feed":
             await FeedAction(page).scroll()
