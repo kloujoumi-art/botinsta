@@ -16,6 +16,7 @@ _SKIP_PATHS = {
     "followers", "following", "friends", "mentions", "tagged", "reel",
 }
 
+# Extrait TOUS les liens de profils FB — utilise le slug/id comme nom de fallback
 _JS_EXTRACT = """
 () => {
     const results = [];
@@ -33,7 +34,8 @@ _JS_EXTRACT = """
                 const canonical = 'https://www.facebook.com/profile.php?id=' + id;
                 if (!seen.has(canonical)) {
                     seen.add(canonical);
-                    results.push({ url: canonical, name: (a.innerText || a.getAttribute('aria-label') || '').trim().substring(0, 60) });
+                    const name = (a.innerText || a.getAttribute('aria-label') || ('user_' + id)).trim().substring(0, 60);
+                    results.push({ url: canonical, name: name || ('user_' + id) });
                 }
                 return;
             }
@@ -50,7 +52,8 @@ _JS_EXTRACT = """
             const canonical = 'https://www.facebook.com/' + parts[0];
             if (!seen.has(canonical)) {
                 seen.add(canonical);
-                results.push({ url: canonical, name: (a.innerText || a.getAttribute('aria-label') || '').trim().substring(0, 60) });
+                const name = (a.innerText || a.getAttribute('aria-label') || parts[0]).trim().substring(0, 60);
+                results.push({ url: canonical, name: name || parts[0] });
             }
         } catch(e) {}
     });
@@ -58,17 +61,21 @@ _JS_EXTRACT = """
 }
 """
 
+# Clique sur tous les boutons "voir plus de commentaires" (multilingue)
 _JS_CLICK_MORE_COMMENTS = """
 () => {
     let clicked = 0;
-    document.querySelectorAll('[role="button"], button').forEach(el => {
-        const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+    const all = Array.from(document.querySelectorAll('[role="button"], button, div[tabindex="0"], a'));
+    all.forEach(el => {
+        const txt = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim().toLowerCase();
         if (
-            txt.includes('view') || txt.includes('more comment') ||
-            txt.includes('voir') || txt.includes('commentaire') ||
+            txt.includes('more comment') || txt.includes('view') ||
+            txt.includes('voir plus') || txt.includes('commentaire') ||
             txt.includes('afficher') || txt.includes('réponse') ||
             txt.includes('reply') || txt.includes('replies') ||
-            txt.includes('تعليق') || txt.includes('المزيد')
+            txt.includes('تعليق') || txt.includes('المزيد') ||
+            txt.includes('عرض') || txt.includes('ردود') ||
+            txt.includes('مزيد') || txt.includes('أكثر')
         ) {
             try { el.click(); clicked++; } catch(e) {}
         }
@@ -116,8 +123,8 @@ class FbTargetScraper:
 
             all_targets: List[Dict] = []
 
-            # Scroll sur la page principale pour charger les posts
-            for i in range(5):
+            # Scroll sur la page principale
+            for _ in range(5):
                 await self.page.evaluate("window.scrollBy(0, 800)")
                 await random_sleep(1.5, 2.5)
                 batch = await self._js_collect(limit)
@@ -129,8 +136,8 @@ class FbTargetScraper:
 
             logger.info(f"[FB] {len(all_targets)} profils sur la page principale")
 
-            # Aller dans les posts individuels pour charger les commentaires
-            post_urls = await self._find_post_urls(12)
+            # Explorer les posts individuels
+            post_urls = await self._find_post_urls(15)
             logger.info(f"[FB] {len(post_urls)} posts à explorer")
 
             for post_url in post_urls:
@@ -150,27 +157,43 @@ class FbTargetScraper:
             return []
 
     async def _scrape_post_comments(self, post_url: str, limit: int) -> List[Dict]:
-        """Navigue dans un post et charge les commentaires via clics + scroll."""
         try:
             await self.page.goto(post_url, wait_until="domcontentloaded", timeout=25000)
             await random_sleep(2, 3)
 
-            # Scroll vers le bas pour atteindre les commentaires
-            for _ in range(4):
-                await self.page.evaluate("window.scrollBy(0, 600)")
-                await random_sleep(0.8, 1.5)
-
-            # Cliquer plusieurs fois pour charger plus de commentaires
+            # Scroll vers les commentaires
             for _ in range(5):
-                clicked = await self.page.evaluate(_JS_CLICK_MORE_COMMENTS)
-                await random_sleep(1.2, 2.0)
-                await self.page.evaluate("window.scrollBy(0, 500)")
+                await self.page.evaluate("window.scrollBy(0, 600)")
                 await random_sleep(0.8, 1.2)
-                if clicked == 0:
-                    break
 
-            # Scroll final pour s'assurer que tout est chargé
-            for _ in range(3):
+            # 8 tentatives de chargement de commentaires
+            total_clicked = 0
+            for i in range(8):
+                clicked = await self.page.evaluate(_JS_CLICK_MORE_COMMENTS)
+                total_clicked += clicked
+                await random_sleep(1.5, 2.5)
+                await self.page.evaluate("window.scrollBy(0, 400)")
+                await random_sleep(0.5, 1.0)
+
+            if total_clicked > 0:
+                logger.info(f"[FB] {total_clicked} boutons commentaires cliqués")
+
+            # Essayer aussi via Playwright locators (plus fiable sur lazy loading)
+            for text_fragment in ["comment", "commentaire", "تعليق", "ردود", "reply"]:
+                try:
+                    btns = self.page.get_by_role("button", name=re.compile(text_fragment, re.I))
+                    count = await btns.count()
+                    for i in range(min(count, 5)):
+                        try:
+                            await btns.nth(i).click(timeout=2000)
+                            await random_sleep(0.8, 1.5)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            # Scroll final
+            for _ in range(4):
                 await self.page.evaluate("window.scrollBy(0, 600)")
                 await random_sleep(0.5, 1.0)
 
@@ -179,7 +202,7 @@ class FbTargetScraper:
             logger.warning(f"[FB] Erreur post {post_url} : {e}")
             return []
 
-    async def _find_post_urls(self, max_posts: int = 12) -> List[str]:
+    async def _find_post_urls(self, max_posts: int = 15) -> List[str]:
         links, seen = [], set()
         els = await self.page.query_selector_all("a[href]")
         for el in els:
@@ -201,7 +224,7 @@ class FbTargetScraper:
             for item in raw[:limit]:
                 url  = item.get("url", "")
                 name = (item.get("name", "") or "").strip()
-                if url and name and len(name) > 1:
+                if url and name:
                     results.append({"profile_url": url, "name": name})
             return results
         except Exception as e:
