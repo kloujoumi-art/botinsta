@@ -1,8 +1,9 @@
 """
-Scraping des abonnés et interacteurs d'un compte cible.
-Navigue dans l'UI Instagram pour collecter des usernames.
+Scraping des abonnés d'un compte cible.
+Priorité : instagrapi API (via sessionid) → scraping UI navigateur.
 """
 import asyncio
+import os
 import random
 from typing import List
 from playwright.async_api import Page
@@ -20,79 +21,116 @@ class TargetScraper:
     def __init__(self, page: Page):
         self.page = page
 
+    # ── Point d'entrée principal ───────────────────────────────────────────
+
     async def scrape_followers(self, account: str, limit: int = 50) -> List[str]:
-        """
-        Scraper les abonnés d'un compte cible en naviguant dans l'UI.
-        Retourne la liste des usernames collectés.
-        """
         account = account.lstrip("@")
         logger.info(f"Scraping abonnés de @{account} (max {limit})...")
 
+        # Essai 1 : API instagrapi avec sessionid
+        usernames = await self._api_scrape(account, limit)
+
+        # Essai 2 : fallback navigateur
+        if not usernames:
+            logger.info(f"Fallback scraping UI pour @{account}")
+            usernames = await self._browser_scrape(account, limit)
+
+        if not usernames:
+            logger.warning(f"Aucun abonné trouvé pour @{account}")
+            log_action("scrape_followers", target=account, status="error",
+                       details="0 usernames collectés")
+            return []
+
+        new_targets = [u for u in usernames if not is_already_targeted(u)]
+        if new_targets:
+            added = add_targets_bulk(new_targets, source=f"followers:{account}")
+            logger.info(f"✓ {added} nouveaux abonnés de @{account} ajoutés comme cibles")
+        else:
+            logger.info("Tous les abonnés de @{account} sont déjà en base")
+
+        log_action("scrape_followers", target=account, status="success",
+                   details=f"{len(new_targets)} ajoutés")
+        return new_targets
+
+    # ── Méthode 1 : instagrapi via sessionid ──────────────────────────────
+
+    async def _api_scrape(self, account: str, limit: int) -> List[str]:
+        session_id = os.getenv("INSTAGRAM_SESSIONID", "").strip()
+        if not session_id:
+            return []
+
+        def _do():
+            try:
+                from instagrapi import Client
+                cl = Client()
+                cl.delay_range = [1, 3]
+                cl.login_by_sessionid(session_id)
+                user_id = cl.user_id_from_username(account)
+                followers = cl.user_followers(user_id, amount=limit)
+                return [u.username for u in followers.values()]
+            except Exception as e:
+                logger.warning(f"API scrape échoué pour @{account} : {e}")
+                return []
+
         try:
-            # Aller sur le profil
+            return await asyncio.to_thread(_do)
+        except Exception as e:
+            logger.warning(f"Erreur thread API scrape : {e}")
+            return []
+
+    # ── Méthode 2 : scraping via l'UI Instagram ────────────────────────────
+
+    async def _browser_scrape(self, account: str, limit: int) -> List[str]:
+        try:
             await self.page.goto(
                 f"{INSTAGRAM_URL}/{account}/",
                 wait_until="domcontentloaded",
                 timeout=25000,
             )
-            await random_sleep(3, 6)
+            await random_sleep(3, 5)
 
-            # Vérifier que le profil est public
             if await self._is_private():
-                logger.warning(f"@{account} est privé — scraping impossible")
+                logger.warning(f"@{account} est privé — scraping UI impossible")
                 return []
 
-            # Cliquer sur "Abonnés"
-            followers_clicked = await self._click_followers_link(account)
-            if not followers_clicked:
-                logger.warning(f"Impossible d'ouvrir les abonnés de @{account}")
+            if not await self._click_followers_link(account):
+                logger.warning(f"Impossible d'ouvrir les abonnés de @{account} (UI)")
                 return []
 
             await random_sleep(2, 4)
-
-            # Scraper les usernames dans la modale
             usernames = await self._scrape_modal_usernames(limit)
-
-            # Fermer la modale
             await self.page.keyboard.press("Escape")
-            await random_sleep(1, 3)
-
-            # Filtrer et enregistrer
-            new_targets = [u for u in usernames if not is_already_targeted(u)]
-            if new_targets:
-                added = add_targets_bulk(new_targets, source=f"followers:{account}")
-                logger.info(f"✓ {added} nouveaux abonnés de @{account} ajoutés comme cibles")
-            else:
-                logger.info("Aucun nouveau abonné trouvé")
-
-            log_action("scrape_followers", target=account, status="success",
-                       details=f"{len(new_targets)} ajoutés")
-            return new_targets
+            await random_sleep(1, 2)
+            return usernames
 
         except Exception as e:
-            logger.warning(f"Erreur scraping @{account} : {e}")
-            log_error("scrape_error", str(e), "scrape_followers")
-            log_action("scrape_followers", target=account, status="error", details=str(e))
+            logger.warning(f"Erreur scraping UI @{account} : {e}")
+            log_error("scrape_error", str(e), "scrape_followers_ui")
             return []
 
     async def _is_private(self) -> bool:
         try:
             content = await self.page.content()
-            return "Ce compte est privé" in content or "This Account is Private" in content
+            return (
+                "Ce compte est privé" in content
+                or "This Account is Private" in content
+                or "This account is private" in content
+            )
         except Exception:
             return False
 
     async def _click_followers_link(self, account: str) -> bool:
-        """Cliquer sur le compteur d'abonnés du profil."""
         selectors = [
             f'a[href="/{account}/followers/"]',
+            f'a[href*="/followers"]',
             'a:has-text("abonnés")',
             'a:has-text("followers")',
+            'a:has-text("Followers")',
         ]
         for sel in selectors:
             try:
                 elem = self.page.locator(sel).first
-                if await elem.is_visible(timeout=4000):
+                if await elem.is_visible(timeout=5000):
                     await elem.click()
                     return True
             except Exception:
@@ -100,32 +138,45 @@ class TargetScraper:
         return False
 
     async def _scrape_modal_usernames(self, limit: int) -> List[str]:
-        """Défiler dans la modale des abonnés et collecter les usernames."""
-        usernames = set()
+        usernames: set = set()
         scroll_attempts = 0
-        max_scroll_attempts = limit // 5 + 10
+        max_attempts = limit // 5 + 15
+        stall_count = 0
 
-        # Attendre que la modale se charge
-        await random_sleep(2, 4)
+        await random_sleep(2, 3)
 
-        while len(usernames) < limit and scroll_attempts < max_scroll_attempts:
-            # Chercher tous les liens de profil dans la modale
+        while len(usernames) < limit and scroll_attempts < max_attempts:
+            prev_count = len(usernames)
+
             try:
+                # Sélecteurs larges pour la modale des abonnés
                 links = await self.page.query_selector_all(
                     'div[role="dialog"] a[href^="/"], '
-                    'div[class*="followers"] a[href^="/"]'
+                    'div[role="dialog"] a[role="link"], '
+                    '[class*="follower"] a[href^="/"]'
                 )
                 for link in links:
                     try:
                         href = await link.get_attribute("href")
-                        if href and href.startswith("/") and "/" not in href[1:]:
+                        if href and href.startswith("/") and href.count("/") == 2 and href.endswith("/"):
                             username = href.strip("/")
-                            if username and len(username) > 0:
+                            if username and len(username) >= 2:
+                                usernames.add(username)
+                        elif href and href.startswith("/") and "/" not in href[1:]:
+                            username = href.strip("/")
+                            if username and len(username) >= 2:
                                 usernames.add(username)
                     except Exception:
                         pass
             except Exception:
                 pass
+
+            if len(usernames) == prev_count:
+                stall_count += 1
+                if stall_count >= 4:
+                    break
+            else:
+                stall_count = 0
 
             if len(usernames) >= limit:
                 break
@@ -134,36 +185,32 @@ class TargetScraper:
             try:
                 modal = await self.page.query_selector('div[role="dialog"]')
                 if modal:
-                    await self.page.evaluate(
-                        'arguments[0].scrollBy(0, 400)',
-                        modal
-                    )
+                    await self.page.evaluate("arguments[0].scrollBy(0, 500)", modal)
                 else:
-                    await self.page.evaluate("window.scrollBy(0, 400)")
+                    await self.page.evaluate("window.scrollBy(0, 500)")
             except Exception:
-                await self.page.evaluate("window.scrollBy(0, 400)")
+                await self.page.evaluate("window.scrollBy(0, 500)")
 
-            await random_sleep(1.5, 3.5)
+            await random_sleep(1.5, 3.0)
             scroll_attempts += 1
 
         collected = list(usernames)[:limit]
-        logger.debug(f"Collecté {len(collected)} usernames")
+        logger.debug(f"UI collecté {len(collected)} usernames")
         return collected
 
+    # ── Scraping des likers d'un post ──────────────────────────────────────
+
     async def scrape_post_likers(self, post_url: str, limit: int = 30) -> List[str]:
-        """Scraper les personnes qui ont liké un post (si accessible)."""
         logger.info(f"Scraping likers de {post_url}...")
         try:
             await self.page.goto(post_url, wait_until="domcontentloaded", timeout=20000)
             await random_sleep(3, 5)
 
-            # Cliquer sur le compteur de likes
             like_selectors = [
                 'a:has-text("J\'aime")',
                 'button:has-text("J\'aime")',
                 'span:has-text("J\'aime") a',
             ]
-
             for sel in like_selectors:
                 try:
                     elem = self.page.locator(sel).first
@@ -172,7 +219,6 @@ class TargetScraper:
                         await random_sleep(2, 4)
                         usernames = await self._scrape_modal_usernames(limit)
                         await self.page.keyboard.press("Escape")
-
                         if usernames:
                             new = [u for u in usernames if not is_already_targeted(u)]
                             if new:
@@ -181,7 +227,6 @@ class TargetScraper:
                         return usernames
                 except Exception:
                     continue
-
             return []
         except Exception as e:
             logger.warning(f"Erreur scraping likers : {e}")
