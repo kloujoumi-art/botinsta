@@ -57,7 +57,19 @@ class BotEngine:
         return True
 
     async def run(self) -> None:
-        if not await self.initialize():
+        # Retry login jusqu'à 10 fois (toutes les 5 min) avant d'abandonner
+        for attempt in range(1, 11):
+            if await self.initialize():
+                break
+            logger.warning(
+                f"Connexion échouée (tentative {attempt}/10) — "
+                f"nouvelle tentative dans 5 min..."
+            )
+            # Recréer le navigateur proprement avant le prochain essai
+            self.browser = BrowserManager()
+            await asyncio.sleep(300)
+        else:
+            logger.error("Impossible de se connecter après 10 tentatives. Arrêt.")
             return
 
         self.running = True

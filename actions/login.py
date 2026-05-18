@@ -69,16 +69,31 @@ class LoginManager:
         logger.info("Connexion à Instagram...")
         try:
             await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
-            await random_sleep(5, 8)   # laisser le JS d'Instagram se rendre
+
+            # Attendre l'événement load (JS bundles téléchargés + exécution démarrée)
+            try:
+                await page.wait_for_load_state("load", timeout=25000)
+            except Exception:
+                pass
+
+            await random_sleep(6, 10)  # laisser React hydrater le DOM
 
             current_url = page.url
             page_title = await page.title()
             logger.info(f"Page chargée — URL: {current_url} | Titre: {page_title}")
 
-            # Screenshot de debug sauvegardé sur /data pour inspection dans le dashboard
-            await _take_debug_screenshot(page, "login_page")
-
             await self._handle_cookie_banner(page)
+
+            # Attendre que le formulaire de connexion soit présent dans le DOM
+            try:
+                await page.wait_for_selector('form', timeout=20000)
+                logger.info("Formulaire détecté dans le DOM")
+                await random_sleep(1, 2)
+            except Exception:
+                logger.warning("Formulaire non trouvé, tentative avec les inputs quand même")
+
+            # Screenshot après que le formulaire devrait être là
+            await _take_debug_screenshot(page, "login_page")
 
             # Chercher le champ username avec plusieurs sélecteurs de secours
             username_input = None
@@ -92,7 +107,7 @@ class LoginManager:
 
             for sel in username_selectors:
                 try:
-                    el = await page.wait_for_selector(sel, timeout=12000)
+                    el = await page.wait_for_selector(sel, timeout=20000)
                     if el:
                         logger.info(f"Champ username trouvé : {sel}")
                         username_input = el
