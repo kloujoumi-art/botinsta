@@ -87,12 +87,6 @@ class BotEngine:
 
         self.login_status = "success"
         logger.info("Bot initialisé avec succès ✓")
-
-        # Scrape initial pour remplir la file de cibles dès le démarrage
-        if self.settings.target_accounts:
-            logger.info("Scrape initial des cibles au démarrage...")
-            await self._scrape_new_targets()
-
         return True
 
     async def run(self) -> None:
@@ -115,6 +109,14 @@ class BotEngine:
         session_start = datetime.now()
         logger.info(f"Bot démarré — {datetime.now().strftime('%H:%M:%S')}")
         logger.info(f"Limites du jour : {self.limits.summary()}")
+
+        # Scrape initial après running=True pour afficher le bon statut dans le dashboard
+        if self.settings.target_accounts:
+            logger.info("Scrape initial des cibles au démarrage...")
+            try:
+                await self._scrape_new_targets()
+            except Exception as e:
+                logger.warning(f"Scrape initial échoué (non bloquant) : {e}")
 
         try:
             while self.running:
