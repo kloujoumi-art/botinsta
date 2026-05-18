@@ -55,16 +55,13 @@ LAUNCH_ARGS = [
     "--safebrowsing-disable-auto-update",
     "--password-store=basic",
     "--use-mock-keychain",
-    # Réduction mémoire agressive pour Render (512 MB RAM)
-    "--single-process",               # 1 seul processus Chromium (-40% RAM)
-    "--renderer-process-limit=1",
+    # Optimisation mémoire pour Render (2 GB RAM)
     "--disable-renderer-backgrounding",
     "--disable-background-timer-throttling",
     "--disable-backgrounding-occluded-windows",
-    "--js-flags=--max-old-space-size=128",
+    "--js-flags=--max-old-space-size=512",
     "--disable-audio-output",
     "--mute-audio",
-    "--blink-settings=imagesEnabled=false",  # Désactive images (économise ~200MB)
 ]
 
 
@@ -109,9 +106,9 @@ class BrowserManager:
 
         self._page = await self._context.new_page()
 
-        # Bloquer images/médias/polices au niveau réseau pour économiser la RAM
+        # Bloquer images/médias pour économiser la RAM (CSS/fonts conservés)
         async def _block_heavy_resources(route, request):
-            if request.resource_type in ("image", "media", "font", "stylesheet"):
+            if request.resource_type in ("image", "media"):
                 await route.abort()
             else:
                 await route.continue_()
