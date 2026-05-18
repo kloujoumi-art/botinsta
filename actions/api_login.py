@@ -15,8 +15,7 @@ def _do_api_login(username: str, password: str, session_file: str) -> list[dict]
     """Fonction synchrone — appelée via asyncio.to_thread."""
     from instagrapi import Client
     from instagrapi.exceptions import (
-        TwoFactorRequired, ChallengeRequired, BadPassword,
-        InvalidUserError, UserNotFound,
+        TwoFactorRequired, ChallengeRequired, BadPassword, UserNotFound,
     )
 
     cl = Client()
@@ -44,7 +43,7 @@ def _do_api_login(username: str, password: str, session_file: str) -> list[dict]
     except BadPassword:
         logger.error("Mot de passe incorrect — vérifiez INSTAGRAM_PASSWORD dans .env")
         raise
-    except (InvalidUserError, UserNotFound):
+    except UserNotFound:
         logger.error("Nom d'utilisateur introuvable — vérifiez INSTAGRAM_USERNAME dans .env")
         raise
     except Exception as e:
