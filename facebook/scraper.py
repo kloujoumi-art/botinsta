@@ -6,45 +6,30 @@ from utils.human import random_sleep
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
-FB_URL = "https://www.facebook.com"
 
-# Sélecteurs pour trouver les liens de profils dans les commentaires
-COMMENT_PROFILE_SELECTORS = [
-    'div[role="article"] a[href*="facebook.com/"][aria-label]',
-    'div[data-testid="comment"] a[href*="facebook.com/"]',
-    'ul[data-testid="comments-list"] a[href*="facebook.com/"]',
-    'div[aria-label*="ommentaire"] a[href*="facebook.com/"]',
-    'div[class*="comment"] a[href*="facebook.com/"]',
-]
-
-# Sélecteurs pour trouver les liens de posts sur une page
-POST_LINK_SELECTORS = [
-    'a[href*="/posts/"]',
-    'a[href*="/permalink/"]',
-    'a[href*="/videos/"]',
-    'a[href*="/photos/"]',
-    'a[role="link"][href*="facebook.com"]',
-]
+FB_URL    = "https://www.facebook.com"
+MBASIC    = "https://mbasic.facebook.com"   # HTML simple, sélecteurs stables
 
 
 class FbTargetScraper:
     def __init__(self, page: Page):
         self.page = page
 
+    # ── API publique ──────────────────────────────────────────────────────────
+
     async def scrape_friends_of_friend(self, friend_id: str, limit: int = 200) -> List[Dict]:
-        url = friend_id if friend_id.startswith("http") else f"{FB_URL}/{friend_id}"
-        url = url.rstrip("/") + "/friends"
+        url = f"{MBASIC}/{friend_id.lstrip('/')}/friends"
         logger.info(f"[FB] Scraping amis de {friend_id}...")
         try:
             await self.page.goto(url, wait_until="domcontentloaded", timeout=25000)
-            await random_sleep(3, 5)
+            await random_sleep(2, 4)
             if "login" in self.page.url:
                 return []
             content = await self.page.content()
             if "privée" in content.lower() or "private" in content.lower():
                 fb_log_action("scrape_friends", target=friend_id, status="error", details="liste privée")
                 return []
-            targets = await self._scroll_and_collect(limit)
+            targets = await self._mbasic_collect_profiles(limit)
             new = [t for t in targets if not fb_is_already_targeted(t["profile_url"])]
             if new:
                 added = fb_add_targets_bulk(new, source=f"friends_of:{friend_id}")
@@ -57,36 +42,23 @@ class FbTargetScraper:
             return []
 
     async def scrape_page_likers(self, page_id: str, limit: int = 200) -> List[Dict]:
-        """Scrape les commentateurs des posts d'une page (plus fiable que les likers)."""
-        url = page_id if page_id.startswith("http") else f"{FB_URL}/{page_id}"
-        logger.info(f"[FB] Scraping commentateurs de la page {page_id}...")
+        """Scrape les commentateurs des posts d'une page via mbasic (HTML stable)."""
+        logger.info(f"[FB] Scraping commentateurs de {page_id} via mbasic...")
         try:
-            await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await random_sleep(3, 5)
-            if "login" in self.page.url or "checkpoint" in self.page.url:
-                logger.warning(f"[FB] Non connecté lors du scraping de {page_id}")
+            post_urls = await self._mbasic_get_post_urls(page_id, max_posts=8)
+            logger.info(f"[FB] {len(post_urls)} posts trouvés sur {page_id}")
+
+            if not post_urls:
+                fb_log_action("scrape_page", target=page_id, status="error", details="0 posts trouvés")
                 return []
 
-            post_links = await self._get_post_links(limit=8)
-            logger.info(f"[FB] {len(post_links)} posts trouvés sur {page_id}")
-
-            if not post_links:
-                # Essayer de scraper les profils directement depuis la page
-                targets = await self._collect_profiles_from_page(limit)
-                new = [t for t in targets if not fb_is_already_targeted(t["profile_url"])]
-                if new:
-                    added = fb_add_targets_bulk(new, source=f"page:{page_id}")
-                    logger.info(f"[FB] {added} profils de {page_id} ajoutés (fallback)")
-                fb_log_action("scrape_page", target=page_id, status="success", details=f"{len(new)} ajoutés")
-                return new
-
             all_targets: List[Dict] = []
-            per_post = max(limit // len(post_links), 15)
+            per_post = max(limit // len(post_urls), 15)
 
-            for post_url in post_links:
+            for post_url in post_urls:
                 if len(all_targets) >= limit:
                     break
-                commenters = await self._scrape_post_commenters(post_url, per_post)
+                commenters = await self._mbasic_scrape_post_commenters(post_url, per_post)
                 all_targets.extend(commenters)
                 await random_sleep(2, 4)
 
@@ -102,120 +74,134 @@ class FbTargetScraper:
             fb_log_error("scrape_page_error", str(e), "scrape_page")
             return []
 
-    async def _get_post_links(self, limit: int = 8) -> List[str]:
-        """Récupère les liens de posts sur la page courante."""
+    # ── mbasic helpers ────────────────────────────────────────────────────────
+
+    async def _mbasic_get_post_urls(self, page_id: str, max_posts: int = 8) -> List[str]:
+        """Récupère les URLs des posts récents d'une page via mbasic."""
+        url = f"{MBASIC}/{page_id}"
+        await self.page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        await random_sleep(2, 4)
+
+        if "login" in self.page.url or "checkpoint" in self.page.url:
+            logger.warning(f"[FB] Non connecté sur mbasic pour {page_id}")
+            return []
+
         links, seen = [], set()
-
-        # Scroll pour charger plus de posts
-        for _ in range(4):
-            await self.page.evaluate("window.scrollBy(0, 700)")
-            await random_sleep(1.5, 2.5)
-
-        for sel in POST_LINK_SELECTORS:
-            try:
-                els = await self.page.query_selector_all(sel)
-                for el in els:
-                    href = (await el.get_attribute("href") or "").split("?")[0].rstrip("/")
-                    if not href or "facebook.com" not in href:
-                        continue
-                    if any(x in href for x in ["/pages/", "/groups/", "l.facebook.com", "/events/"]):
-                        continue
-                    if any(x in href for x in ["/posts/", "/permalink/", "/videos/", "/photos/"]):
-                        if href not in seen:
-                            seen.add(href)
-                            links.append(href)
-                if len(links) >= limit:
-                    break
-            except Exception:
+        # Sur mbasic, les posts ont des liens /story.php ou /permalink/ ou /{page}/posts/
+        els = await self.page.query_selector_all('a[href]')
+        for el in els:
+            href = await el.get_attribute("href") or ""
+            href = href.split("?")[0].rstrip("/")
+            # Convertir les URLs relatives mbasic en absolues
+            if href.startswith("/story.php") or href.startswith("/permalink"):
+                href = MBASIC + href
+            if not href.startswith("http"):
                 continue
+            if any(x in href for x in ["story.php", "/permalink/", "/posts/"]):
+                full = href.replace("mbasic.facebook.com", "mbasic.facebook.com")
+                if full not in seen:
+                    seen.add(full)
+                    links.append(full)
+            if len(links) >= max_posts:
+                break
 
-        return links[:limit]
+        # Fallback : reconstruire les URLs depuis les attributs data
+        if not links:
+            els = await self.page.query_selector_all('a[href*="story_fbid"], a[href*="story.php"]')
+            for el in els:
+                href = await el.get_attribute("href") or ""
+                if href and href not in seen:
+                    seen.add(href)
+                    if not href.startswith("http"):
+                        href = MBASIC + href
+                    links.append(href)
+                if len(links) >= max_posts:
+                    break
 
-    async def _scrape_post_commenters(self, post_url: str, limit: int) -> List[Dict]:
-        """Ouvre un post et scrape les profils des commentateurs."""
+        return links[:max_posts]
+
+    async def _mbasic_scrape_post_commenters(self, post_url: str, limit: int) -> List[Dict]:
+        """Ouvre un post mbasic et collecte les profils des commentateurs."""
         targets = []
         try:
-            await self.page.goto(post_url, wait_until="domcontentloaded", timeout=25000)
-            await random_sleep(2, 4)
+            # S'assurer qu'on utilise mbasic
+            mbasic_url = post_url.replace("www.facebook.com", "mbasic.facebook.com")
+            await self.page.goto(mbasic_url, wait_until="domcontentloaded", timeout=25000)
+            await random_sleep(2, 3)
 
-            # Scroll pour charger les commentaires
+            # Sur mbasic, les commentaires sont directement visibles avec des <a> simples
+            # Format : <a href="/username">Nom</a> ou <a href="/profile.php?id=...">
+            targets = await self._mbasic_collect_profiles(limit)
+            logger.info(f"[FB] {len(targets)} commentateurs dans ce post")
+
+            # Essayer de charger plus de commentaires
             for _ in range(3):
-                await self.page.evaluate("window.scrollBy(0, 600)")
-                await random_sleep(1, 2)
-
-            # Essayer de cliquer "Voir plus de commentaires"
-            for btn_text in ["Voir plus de commentaires", "View more comments", "Plus de commentaires"]:
                 try:
-                    btn = self.page.get_by_text(btn_text).first
-                    if await btn.is_visible(timeout=2000):
-                        await btn.click()
+                    more_btn = self.page.get_by_text("Voir plus de commentaires").first
+                    if await more_btn.is_visible(timeout=2000):
+                        await more_btn.click()
                         await random_sleep(1.5, 2.5)
+                        extra = await self._mbasic_collect_profiles(limit - len(targets))
+                        targets.extend(extra)
                 except Exception:
-                    pass
-
-            targets = await self._collect_profiles_from_page(limit)
-            logger.info(f"[FB] {len(targets)} commentateurs trouvés dans {post_url.split('/')[-1][:30]}")
+                    break
 
         except Exception as e:
-            logger.warning(f"[FB] Erreur scraping commentaires : {e}")
+            logger.warning(f"[FB] Erreur scraping post : {e}")
         return targets
 
-    async def _collect_profiles_from_page(self, limit: int) -> List[Dict]:
-        """Collecte les liens de profils visibles sur la page courante."""
+    async def _mbasic_collect_profiles(self, limit: int) -> List[Dict]:
+        """
+        Collecte les liens de profils Facebook sur la page mbasic courante.
+        Sur mbasic, les profils ont des URLs simples : /username ou /profile.php?id=XXX
+        """
         targets, seen = [], set()
+        els = await self.page.query_selector_all('a[href]')
 
-        for sel in COMMENT_PROFILE_SELECTORS:
+        for el in els:
             try:
-                els = await self.page.query_selector_all(sel)
-                for el in els:
-                    href = (await el.get_attribute("href") or "").split("?")[0].rstrip("/")
-                    name = (await el.get_attribute("aria-label") or await el.inner_text() or "").strip()[:60]
-                    if not href or len(href) < 26:
-                        continue
-                    if "facebook.com" not in href:
-                        continue
-                    if any(x in href for x in ["/posts/", "/photos/", "/videos/", "/permalink/",
-                                                "l.facebook.com", "/events/", "/groups/", "/pages/"]):
-                        continue
-                    if href not in seen:
-                        seen.add(href)
-                        targets.append({"profile_url": href, "name": name})
+                href = await el.get_attribute("href") or ""
+                name = (await el.inner_text() or "").strip()[:60]
+
+                # Ignorer les liens vides ou trop courts
+                if not href or len(href) < 2:
+                    continue
+
+                # Normaliser l'URL
+                if href.startswith("/") and not href.startswith("//"):
+                    href = "https://www.facebook.com" + href.split("?")[0].rstrip("/")
+                elif "facebook.com" in href:
+                    href = "https://www.facebook.com" + "/" + href.split("facebook.com/", 1)[-1].split("?")[0].rstrip("/")
+                else:
+                    continue
+
+                # Filtrer les URLs non-profil
+                path = href.replace("https://www.facebook.com", "").strip("/")
+                if not path:
+                    continue
+                skip_patterns = [
+                    "posts", "photos", "videos", "permalink", "story",
+                    "events", "groups", "pages", "hashtag", "watch",
+                    "marketplace", "gaming", "ads", "help", "privacy",
+                    "login", "checkpoint", "recover", "settings",
+                    "notifications", "messages", "friends", "bookmarks",
+                    "search", "explore", "l.facebook", "share",
+                ]
+                if any(p in path for p in skip_patterns):
+                    continue
+
+                # Garder uniquement /username ou /profile.php?id=...
+                if "/" in path and not path.startswith("profile.php"):
+                    continue  # sous-page d'un profil, pas le profil lui-même
+
+                if href not in seen and name and len(name) > 1:
+                    seen.add(href)
+                    targets.append({"profile_url": href, "name": name})
+
                 if len(targets) >= limit:
                     break
+
             except Exception:
                 continue
 
-        return targets[:limit]
-
-    async def _scroll_and_collect(self, limit: int) -> List[Dict]:
-        """Scroll et collecte les profils (pour la liste d'amis)."""
-        targets, seen_urls = [], set()
-        stall = scroll = 0
-        max_scroll = limit // 8 + 25
-        await random_sleep(2, 3)
-        while len(targets) < limit and scroll < max_scroll:
-            prev = len(targets)
-            cards = await self.page.query_selector_all(
-                'div[role="main"] a[href*="facebook.com/"][aria-label],'
-                'div[role="main"] a[href^="https://www.facebook.com/profile"]'
-            )
-            for card in cards:
-                try:
-                    href = (await card.get_attribute("href") or "").split("?")[0].rstrip("/")
-                    name = await card.get_attribute("aria-label") or ""
-                    if not href or "facebook.com" not in href:
-                        continue
-                    if any(x in href for x in ["/friends", "/photos", "/videos", "/posts", "l.facebook.com"]):
-                        continue
-                    if href not in seen_urls and len(href) > 25:
-                        seen_urls.add(href)
-                        targets.append({"profile_url": href, "name": name})
-                except Exception:
-                    continue
-            stall = 0 if len(targets) > prev else stall + 1
-            if stall >= 5 or len(targets) >= limit:
-                break
-            await self.page.evaluate("window.scrollBy(0, 800)")
-            await random_sleep(2, 4)
-            scroll += 1
-        return targets[:limit]
+        return targets
